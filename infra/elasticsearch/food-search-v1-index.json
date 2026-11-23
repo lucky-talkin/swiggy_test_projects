@@ -1,0 +1,40 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "analysis": {
+      "normalizer": {
+        "lowercase_normalizer": {
+          "type": "custom",
+          "filter": ["lowercase", "asciifolding"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "id": { "type": "keyword" },
+      "entity_type": { "type": "keyword" },
+      "restaurant_id": { "type": "keyword" },
+      "name": {
+        "type": "text",
+        "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } }
+      },
+      "description": { "type": "text" },
+      "cuisines": {
+        "type": "text",
+        "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } }
+      },
+      "category": { "type": "text", "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } } },
+      "price_for_two": { "type": "integer" },
+      "rating": { "type": "half_float" },
+      "delivery_time_minutes": { "type": "integer" },
+      "is_open": { "type": "boolean" },
+      "city": { "type": "text", "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } } },
+      "area": { "type": "text", "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } } },
+      "location": { "type": "geo_point" },
+      "popularity_score": { "type": "float" }
+    }
+  }
+}
