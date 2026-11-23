@@ -14,6 +14,7 @@ export interface FoodItem {
   city?: string
   area?: string
   image_url?: string
+  location?: { lat: number; lon: number }
 }
 export interface SearchResponse {
   results?: FoodItem[]
@@ -32,5 +33,7 @@ export interface Order {
   currency: string
   status: string
   failure_reason?: string
+  delivery_address?: { line1?: string; city?: string }
+  updated_at?: string
   created_at?: string
 }
