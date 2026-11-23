@@ -6,6 +6,7 @@ type SearchRequest struct {
 	Query string
 	Type string
 	City string
+	RestaurantID string
 	Cuisine string
 	MinRating float64
 	Latitude *float64
