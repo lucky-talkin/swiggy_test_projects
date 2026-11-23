@@ -37,6 +37,25 @@ APIs: user-auth 8081, catalog 8082, search 8083, restaurant-ops 8084, driver-ops
 
 Temporal admin-tools initializes the separate Temporal persistence and visibility schemas in PostgreSQL and creates the `default` namespace before the order API and worker start. Go services apply their own migrations at startup. The local driver service seeds three demo drivers.
 
+## Search API
+
+Search is a read-only query service over the Elasticsearch `food-search-v1` index. Catalog or a dedicated indexing consumer owns writes; Search does not mutate catalog documents.
+
+Create the index mapping once, then query the service:
+
+```bash
+curl -X PUT 'http://localhost:9200/food-search-v1' \
+  -H 'Content-Type: application/json' \
+  --data-binary @infra/elasticsearch/food-search-v1-index.json
+
+curl 'http://localhost:8083/v1/search?q=dosa&city=Bengaluru&type=restaurant&min_rating=4&page=1&page_size=10'
+curl 'http://localhost:8083/v1/search?q=paneer&lat=12.9716&lon=77.5946&radius_km=5'
+curl http://localhost:8083/healthz
+curl http://localhost:8083/readyz
+```
+
+Supported filters include entity type, city, cuisine, minimum rating and geo radius. Pagination is bounded to 50 results per page. See [services/search/docs/index-contract.md](services/search/docs/index-contract.md) for the Elasticsearch document mapping and API contract. The index must be populated separately; the Search service intentionally does not create fake catalog data.
+
 ## Order lifecycle — Temporal Saga
 
 The order is a distributed business process, not a database transaction across services.
