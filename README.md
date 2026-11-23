@@ -72,6 +72,9 @@ Verify the data through the Search API:
 curl 'http://localhost:8083/v1/search?city=Bengaluru&type=restaurant&page_size=20'
 curl 'http://localhost:8083/v1/search?city=Bengaluru&type=menu_item&page_size=20'
 curl 'http://localhost:8083/v1/search?q=dosa&city=Bengaluru&type=menu_item'
+
+# Assert fixture counts, full-text search and menu checkout fields
+python3 infra/elasticsearch/verify_search_seed.py
 ```
 
 Menu-item documents include `id`, `restaurant_id` and `price`, which the frontend cart and checkout need. These are development fixtures, not production catalog data.
