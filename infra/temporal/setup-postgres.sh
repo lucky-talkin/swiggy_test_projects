@@ -7,6 +7,10 @@ VISIBILITY_DBNAME=${VISIBILITY_DBNAME:-temporal_visibility}
 
 : "${POSTGRES_SEEDS:?POSTGRES_SEEDS is required}"
 : "${POSTGRES_USER:?POSTGRES_USER is required}"
+: "${POSTGRES_PWD:?POSTGRES_PWD is required}"
+
+# temporal-sql-tool reads the database password from SQL_PASSWORD.
+export SQL_PASSWORD="${POSTGRES_PWD}"
 
 echo "Waiting for PostgreSQL at ${POSTGRES_SEEDS}:${DB_PORT}..."
 attempt=1
