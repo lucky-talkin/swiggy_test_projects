@@ -9,9 +9,10 @@ import (
 	"github.com/lucky-talkin/swiggy_test_projects/services/search/internal/search"
 )
 
-type fakeBackend struct{}
-func (fakeBackend) Ping(context.Context) error { return nil }
-func (fakeBackend) Search(context.Context, search.SearchRequest) (search.SearchResult, error) {
+type fakeBackend struct { request search.SearchRequest }
+func (*fakeBackend) Ping(context.Context) error { return nil }
+func (f *fakeBackend) Search(_ context.Context, request search.SearchRequest) (search.SearchResult, error) {
+	f.request = request
 	return search.SearchResult{Total: 0, Page: 1, PageSize: 20, Items: []search.Document{}}, nil
 }
 
@@ -23,7 +24,9 @@ func TestSearchEndpoint(t *testing.T) {
 	handler.Routes().ServeHTTP(response, request)
 	if response.Code != http.StatusOK { t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String()) }
 	if response.Header().Get("X-Request-ID") == "" { t.Fatal("expected request ID response header") }
-	if backend.request.RestaurantID != "restaurant-1" || backend.request.Type != "menu_item" { t.Fatalf("restaurant filter not forwarded: %+v", backend.request) }
+	if backend.request.RestaurantID != "restaurant-1" || backend.request.Type != "menu_item" {
+		t.Fatalf("restaurant filter not forwarded: %+v", backend.request)
+	}
 }
 
 func TestReadyEndpoint(t *testing.T) {
