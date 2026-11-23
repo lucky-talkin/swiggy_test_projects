@@ -56,7 +56,7 @@ For menu items, set `entity_type` to `menu_item`, set `restaurant_id`, and popul
 | `min_rating` | Minimum rating | 0–5 |
 | `lat`, `lon` | User coordinates; must be supplied together | optional |
 | `radius_km` | Geo radius | 5 km default; 0.1–50 |
-| `page` | 1-based page | 1 |
+| `page` | 1-based page | 1; max 200 |
 | `page_size` | Result count | 20; max 50 |
 
 All results are filtered to currently open entities. Text relevance is ranked first, followed by `popularity_score`.

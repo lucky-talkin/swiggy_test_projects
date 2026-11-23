@@ -42,3 +42,11 @@ func TestServiceRequiresCoordinatePair(t *testing.T) {
 	_, err := service.Search(context.Background(), SearchRequest{Latitude: &lat})
 	if !errors.Is(err, ErrInvalidRequest) { t.Fatalf("expected ErrInvalidRequest, got %v", err) }
 }
+
+func TestServiceRejectsPageBeyondElasticsearchWindow(t *testing.T) {
+	service := NewService(&fakeSearcher{})
+	_, err := service.Search(context.Background(), SearchRequest{Page: 201, PageSize: 50})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+}
