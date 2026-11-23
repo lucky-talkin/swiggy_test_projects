@@ -42,7 +42,7 @@ Temporal admin-tools initializes the separate Temporal persistence and visibilit
 Search is a read-only query service over the Elasticsearch `food-search-v1` index. Catalog or a dedicated indexing consumer owns writes; Search does not mutate catalog documents.
 
 ```bash
-curl 'http://localhost:8083/v1/search?q=dosa&city=Bengaluru&type=restaurant&min_rating=4&page=1&page_size=10'
+curl -X PUT 'http://localhost:9200/food-search-v1' \\\n  -H 'Content-Type: application/json' --data-binary @infra/elasticsearch/food-search-v1-index.json\ncurl 'http://localhost:8083/v1/search?q=dosa&city=Bengaluru&type=restaurant&min_rating=4&page=1&page_size=10'
 curl 'http://localhost:8083/v1/search?q=paneer&lat=12.9716&lon=77.5946&radius_km=5'
 curl http://localhost:8083/healthz
 curl http://localhost:8083/readyz
