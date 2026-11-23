@@ -92,6 +92,7 @@ func (c *ElasticsearchClient) Search(ctx context.Context, request SearchRequest)
 		"sort": []any{
 			map[string]any{"_score": map[string]any{"order": "desc"}},
 			map[string]any{"popularity_score": map[string]any{"order": "desc", "missing": "_last"}},
+			map[string]any{"id": map[string]any{"order": "asc"}},
 		},
 	}
 	body, err := json.Marshal(payload)
