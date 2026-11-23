@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-food}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-food}
+      POSTGRES_DB: ${POSTGRES_DB:-food_delivery}
+    ports: ["5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U food -d food_delivery"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports: ["9200:9200"]
+    volumes: [es_data:/usr/share/elasticsearch/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  kafka:
+    image: bitnami/kafka:3.8
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports: ["9092:9092"]
+
+  temporal:
+    image: temporalio/auto-setup:1.25
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-food}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-food}
+      POSTGRES_SEEDS: postgres
+    ports: ["7233:7233"]
+
+  temporal-ui:
+    image: temporalio/ui:2._slots
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports: ["8088:8080"]
+    depends_on: [temporal]
+
+  user-auth:
+    build: ./services/user-auth
+    environment: [ "PORT=8081", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "JWT_SECRET=${JWT_SECRET:-dev-secret}" ]
+    ports: ["8081:8081"]
+    depends_on: [postgres]
+
+  catalog:
+    build: ./services/catalog
+    environment: ["PORT=8082", "ELASTICSEARCH_URL=http://elasticsearch:9200"]
+    ports: ["8082:8082"]
+    depends_on: [elasticsearch]
+
+  search:
+    build: ./services/search
+    environment: ["PORT=8083", "ELASTICSEARCH_URL=http://elasticsearch:9200"]
+    ports: ["8083:8083"]
+    depends_on: [elasticsearch]
+
+  restaurant-ops:
+    build: ./services/restaurant-ops
+    environment: ["PORT=8084", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}"]
+    ports: ["8084:8084"]
+    depends_on: [postgres]
+
+  driver-ops:
+    build: ./services/driver-ops
+    environment: ["PORT=8085", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}"]
+    ports: ["8085:8085"]
+    depends_on: [postgres]
+
+  order-api:
+    build: ./services/order-api
+    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233"]
+    ports: ["8086:8086"]
+    depends_on: [postgres, temporal]
+
+  temporal-worker:
+    build: ./workflows
+    environment: ["TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_NAMESPACE=default", "USER_AUTH_URL=http://user-auth:8081", "RESTAURANT_OPS_URL=http://restaurant-ops:8084", "DRIVER_OPS_URL=http://driver-ops:8085", "ORDER_API_URL=http://order-api:8086"]
+    depends_on: [temporal, restaurant-ops, driver-ops, order-api]
+
+volumes:
+  postgres_data:
+  es_data:
