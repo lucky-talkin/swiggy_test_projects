@@ -35,8 +35,8 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (SearchResu
 	if request.Page == 0 {
 		request.Page = 1
 	}
-	if request.Page < 1 || request.Page > 10000 {
-		return SearchResult{}, fmt.Errorf("%w: page must be between 1 and 10000", ErrInvalidRequest)
+	if request.Page < 1 || request.Page > 200 {
+		return SearchResult{}, fmt.Errorf("%w: page must be between 1 and 200", ErrInvalidRequest)
 	}
 	if request.PageSize == 0 {
 		request.PageSize = 20
