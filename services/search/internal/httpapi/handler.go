@@ -46,7 +46,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	request := search.SearchRequest{
 		Query: query.Get("q"), Type: query.Get("type"), City: query.Get("city"),
-		Cuisine: query.Get("cuisine"), Page: intParam(query.Get("page"), 1),
+		Cuisine: query.Get("cuisine"), RestaurantID: query.Get("restaurant_id"), Page: intParam(query.Get("page"), 1),
 		PageSize: intParam(query.Get("page_size"), 20),
 	}
 	if value := query.Get("min_rating"); value != "" {
