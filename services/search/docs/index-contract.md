@@ -2,13 +2,20 @@
 
 Search is a read-only query service. Catalog (or a dedicated indexing consumer) owns writes to the Elasticsearch index. Search never creates or mutates catalog documents.
 
-## Index
+## Index setup
 
 - Default index: `food-search-v1`
 - Override with `ELASTICSEARCH_INDEX`.
 - Elasticsearch URL: `ELASTICSEARCH_URL`.
+- Create the index once before using the API:
 
-The index must map `location` as `geo_point`; `city` and `cuisines` should expose `.keyword` fields for exact filters. `name`, `description`, `category`, `area`, and `cuisines` should be searchable text fields. `rating` and `popularity_score` should be numeric; `is_open` should be boolean.
+```bash
+curl -X PUT 'http://localhost:9200/food-search-v1' \
+  -H 'Content-Type: application/json' \
+  --data-binary @infra/elasticsearch/food-search-v1-index.json
+```
+
+The explicit mapping is in [infra/elasticsearch/food-search-v1-index.json](../../../infra/elasticsearch/food-search-v1-index.json). It maps `location` as `geo_point`, and city/cuisines as text with normalized `.keyword` subfields for exact filters.
 
 ## Document shape
 
