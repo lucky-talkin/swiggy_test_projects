@@ -88,6 +88,10 @@ def main() -> int:
             request("PUT", INDEX, mapping)
             print(f"Created index {INDEX!r} from {MAPPING_FILE.name}.")
 
+        # Older local indices may predate the menu-item price field.
+        # Add it idempotently so strict mappings accept seeded menu documents.
+        request("PUT", f"{INDEX}/_mapping", json.dumps({"properties": {"price": {"type": "integer"}}}).encode())
+
         restaurants = []
         for item in RESTAURANTS:
             restaurants.append({**item, "entity_type": "restaurant", "restaurant_id": item["id"]})
