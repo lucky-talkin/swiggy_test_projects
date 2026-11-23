@@ -130,9 +130,21 @@ services:
 
   search:
     build: ./services/search
-    environment: ["PORT=8083", "ELASTICSEARCH_URL=http://elasticsearch:9200"]
+    environment:
+      PORT: 8083
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_INDEX: food-search-v1
+      ELASTICSEARCH_TIMEOUT: 3s
     ports: ["8083:8083"]
-    depends_on: [elasticsearch]
+    depends_on:
+      elasticsearch:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   restaurant-ops:
     build: ./services/restaurant-ops
