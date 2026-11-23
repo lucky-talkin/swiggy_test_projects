@@ -10,6 +10,12 @@
 - **Order API**: customer orders, idempotency, status history, workflow start and internal signal ingress. PostgreSQL.
 - **Temporal worker**: durable order saga; Python SDK. It contains orchestration and no direct I/O.
 
+## Search request path
+
+Search exposes a read-only HTTP API. It validates and normalizes filters, builds Elasticsearch queries for full-text relevance, exact city/cuisine filters, rating thresholds and optional geo distance, and returns bounded paginated results. Catalog (or a future indexing consumer) owns writes to the versioned `food-search-v1` index. This avoids coupling customer-facing reads to the catalog write model.
+
+The service follows a small Go layout: `cmd/search-api` is the executable; `internal/config` owns environment parsing; `internal/httpapi` owns HTTP transport; and `internal/search` owns the search model, validation and Elasticsearch adapter. Its index contract lives under `services/search/docs`.
+
 ## Saga sequence
 
 ```mermaid
