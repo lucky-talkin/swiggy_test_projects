@@ -56,6 +56,29 @@ curl http://localhost:8083/readyz
 
 Supported filters include entity type, city, cuisine, minimum rating and geo radius. Pagination is bounded to 50 results per page. See [services/search/docs/index-contract.md](services/search/docs/index-contract.md) for the Elasticsearch document mapping and API contract. The index must be populated separately; the Search service intentionally does not create fake catalog data.
 
+### Seed local E2E data
+
+For local development and end-to-end testing, the repository includes deterministic Bengaluru demo data (5 restaurants and 15 menu items). From the repository root, after Elasticsearch is running:
+
+```bash
+python3 infra/elasticsearch/seed_search.py
+```
+
+The script creates the index from the mapping if it does not exist, adds the menu-item `price` mapping to older local indices, bulk-indexes stable IDs (safe to re-run), and refreshes the index. It does not delete existing documents. Configure `ELASTICSEARCH_URL` and `ELASTICSEARCH_INDEX` to target a different local/test Elasticsearch instance.
+
+Verify the data through the Search API:
+
+```bash
+curl 'http://localhost:8083/v1/search?city=Bengaluru&type=restaurant&page_size=20'
+curl 'http://localhost:8083/v1/search?city=Bengaluru&type=menu_item&page_size=20'
+curl 'http://localhost:8083/v1/search?q=dosa&city=Bengaluru&type=menu_item'
+
+# Assert fixture counts, full-text search and menu checkout fields
+python3 infra/elasticsearch/verify_search_seed.py
+```
+
+Menu-item documents include `id`, `restaurant_id` and `price`, which the frontend cart and checkout need. These are development fixtures, not production catalog data.
+
 ## Order lifecycle — Temporal Saga
 
 The order is a distributed business process, not a database transaction across services.

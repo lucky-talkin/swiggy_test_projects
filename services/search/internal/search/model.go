@@ -23,6 +23,7 @@ type Document struct {
 	Description string `json:"description,omitempty"`
 	Cuisines []string `json:"cuisines,omitempty"`
 	Category string `json:"category,omitempty"`
+	Price int `json:"price,omitempty"`
 	PriceForTwo int `json:"price_for_two,omitempty"`
 	Rating float64 `json:"rating,omitempty"`
 	DeliveryTimeMinutes int `json:"delivery_time_minutes,omitempty"`
