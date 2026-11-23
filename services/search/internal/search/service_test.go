@@ -20,9 +20,9 @@ func (f *fakeSearcher) Ping(context.Context) error { return nil }
 func TestServiceAppliesDefaultsAndNormalizesFilters(t *testing.T) {
 	fake := &fakeSearcher{}
 	service := NewService(fake)
-	_, err := service.Search(context.Background(), SearchRequest{Query: "  pizza ", City: " Bengaluru ", Cuisine: " South Indian "})
+	_, err := service.Search(context.Background(), SearchRequest{Query: "  pizza ", City: " Bengaluru ", RestaurantID: " restaurant-1 ", Cuisine: " South Indian "})
 	if err != nil { t.Fatal(err) }
-	if fake.request.Query != "pizza" || fake.request.City != "bengaluru" || fake.request.Cuisine != "south indian" {
+	if fake.request.Query != "pizza" || fake.request.City != "bengaluru" || fake.request.RestaurantID != "restaurant-1" || fake.request.Cuisine != "south indian" {
 		t.Fatalf("unexpected normalized request: %+v", fake.request)
 	}
 	if fake.request.Page != 1 || fake.request.PageSize != 20 {

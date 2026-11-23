@@ -20,6 +20,7 @@ func NewService(searcher Searcher) *Service {
 func (s *Service) Search(ctx context.Context, request SearchRequest) (SearchResult, error) {
 	request.Query = strings.TrimSpace(request.Query)
 	request.City = strings.ToLower(strings.TrimSpace(request.City))
+	request.RestaurantID = strings.TrimSpace(request.RestaurantID)
 	request.Cuisine = strings.ToLower(strings.TrimSpace(request.Cuisine))
 	request.Type = strings.ToLower(strings.TrimSpace(request.Type))
 

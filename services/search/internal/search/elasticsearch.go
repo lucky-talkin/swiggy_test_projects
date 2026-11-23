@@ -52,6 +52,9 @@ func (c *ElasticsearchClient) Search(ctx context.Context, request SearchRequest)
 	if request.City != "" {
 		filters = append(filters, map[string]any{"term": map[string]any{"city.keyword": strings.ToLower(request.City)}})
 	}
+	if request.RestaurantID != "" {
+		filters = append(filters, map[string]any{"term": map[string]any{"restaurant_id": request.RestaurantID}})
+	}
 	if request.Cuisine != "" {
 		filters = append(filters, map[string]any{"term": map[string]any{"cuisines.keyword": strings.ToLower(request.Cuisine)}})
 	}
