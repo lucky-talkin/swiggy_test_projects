@@ -4,6 +4,7 @@ import type { Order, SearchResponse } from '../types'
 export interface SearchParams {
   q?: string
   city?: string
+  restaurant_id?: string
   type?: 'restaurant' | 'menu_item'
   cuisine?: string
   min_rating?: number
