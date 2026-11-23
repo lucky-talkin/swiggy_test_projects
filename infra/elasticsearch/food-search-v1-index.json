@@ -27,6 +27,7 @@
         "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } }
       },
       "category": { "type": "text", "fields": { "keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" } } },
+      "price": { "type": "integer" },
       "price_for_two": { "type": "integer" },
       "rating": { "type": "half_float" },
       "delivery_time_minutes": { "type": "integer" },
