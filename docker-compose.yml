@@ -8,7 +8,7 @@ services:
     ports: ["5432:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U food -d food_delivery"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-food} -d ${POSTGRES_DB:-food_delivery}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -39,8 +39,9 @@ services:
       ALLOW_PLAINTEXT_LISTENER: "yes"
     ports: ["9092:9092"]
 
-  temporal:
-    image: temporalio/auto-setup:1.25
+  temporal-admin-tools:
+    image: temporalio/admin-tools:1.32.2
+    restart: on-failure:6
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,10 +51,49 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-food}
       POSTGRES_PWD: ${POSTGRES_PASSWORD:-food}
       POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+    volumes:
+      - ./infra/temporal:/scripts:ro
+    entrypoint: ["/bin/sh"]
+    command: ["/scripts/setup-postgres.sh"]
+
+  temporal:
+    image: temporalio/server:1.32.2
+    depends_on:
+      temporal-admin-tools:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-food}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-food}
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      BIND_ON_IP: 0.0.0.0
     ports: ["7233:7233"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  temporal-create-namespace:
+    image: temporalio/admin-tools:1.32.2
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DEFAULT_NAMESPACE: default
+    volumes:
+      - ./infra/temporal:/scripts:ro
+    entrypoint: ["/bin/sh"]
+    command: ["/scripts/create-namespace.sh"]
 
   temporal-ui:
-    image: temporalio/ui:2.34.0
+    image: temporalio/ui:2.56.0
     environment:
       TEMPORAL_ADDRESS: temporal:7233
     ports: ["8088:8080"]
@@ -61,7 +101,7 @@ services:
 
   user-auth:
     build: ./services/user-auth
-    environment: [ "PORT=8081", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "JWT_SECRET=${JWT_SECRET:-dev-secret}" ]
+    environment: ["PORT=8081", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "JWT_SECRET=${JWT_SECRET:-dev-secret}"]
     ports: ["8081:8081"]
     depends_on: [postgres]
 
@@ -79,26 +119,38 @@ services:
 
   restaurant-ops:
     build: ./services/restaurant-ops
-    environment: ["PORT=8084", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}"]
+    environment: ["PORT=8084", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "ORDER_API_URL=http://order-api:8086", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}"]
     ports: ["8084:8084"]
-    depends_on: [postgres]
+    depends_on: [postgres, order-api]
 
   driver-ops:
     build: ./services/driver-ops
-    environment: ["PORT=8085", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}"]
+    environment: ["PORT=8085", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "ORDER_API_URL=http://order-api:8086", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}"]
     ports: ["8085:8085"]
-    depends_on: [postgres]
+    depends_on: [postgres, order-api]
 
   order-api:
     build: ./services/order-api
-    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233"]
+    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}"]
     ports: ["8086:8086"]
-    depends_on: [postgres, temporal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal-create-namespace:
+        condition: service_completed_successfully
 
   temporal-worker:
     build: ./workflows
-    environment: ["TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_NAMESPACE=default", "USER_AUTH_URL=http://user-auth:8081", "RESTAURANT_OPS_URL=http://restaurant-ops:8084", "DRIVER_OPS_URL=http://driver-ops:8085", "ORDER_API_URL=http://order-api:8086"]
-    depends_on: [temporal, restaurant-ops, driver-ops, order-api]
+    environment: ["TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_NAMESPACE=default", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "RESTAURANT_OPS_URL=http://restaurant-ops:8084", "DRIVER_OPS_URL=http://driver-ops:8085", "ORDER_API_URL=http://order-api:8086"]
+    depends_on:
+      temporal-create-namespace:
+        condition: service_completed_successfully
+      restaurant-ops:
+        condition: service_started
+      driver-ops:
+        condition: service_started
+      order-api:
+        condition: service_started
 
 volumes:
   postgres_data:

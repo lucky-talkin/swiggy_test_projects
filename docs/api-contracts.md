@@ -1,37 +1,38 @@
-# Initial API contracts
+# API contracts
 
-All JSON APIs use `Content-Type: application/json`. Add request validation, pagination, correlation IDs and consistent error envelopes before production.
+JSON requests require `Content-Type: application/json`. Internal endpoints require `X-Service-Token`, configured by `INTERNAL_SERVICE_TOKEN`. These development defaults are not suitable for production.
 
-## User/Auth — :8081
-- `POST /v1/auth/register` — create account.
-- `POST /v1/auth/login` — issue access token.
-- `GET /healthz`.
+## Order API — :8086
 
-## Catalog — :8082
-- `PUT /v1/restaurants/{id}` — upsert restaurant document into Elasticsearch.
-- `GET /v1/restaurants/{id}` — retrieve restaurant.
-- `GET /healthz`.
-
-## Search — :8083
-- `GET /v1/search?q=...` — full-text restaurant/menu search.
+- `POST /v1/orders` — create order. Required `Idempotency-Key`; body: `customer_id`, `restaurant_id`, `items`, `total_amount_minor`, optional `delivery_address`, optional `currency`. Returns 202 and order state. A repeated key with identical payload returns the original order; a different payload returns 409.
+- `GET /v1/orders/{id}` — fetch state.
+- `POST /v1/orders/{id}/cancel` — request cancellation; cancellation is delivered through the order outbox.
+- `PATCH /internal/orders/{id}/status` — worker-only canonical status update.
+- `POST /internal/orders/{id}/signals/{signal}` — internal Temporal signal ingress.
 - `GET /healthz`.
 
 ## Restaurant Ops — :8084
-- `POST /v1/restaurant-orders/{order_id}/accept`
-- `POST /v1/restaurant-orders/{order_id}/reject`
-- `POST /v1/restaurant-orders/{order_id}/ready`
+
+- `POST /v1/restaurant-orders` — internal creation of a restaurant ticket.
+- `POST /v1/restaurant-orders/{order_id}/accept` — persist acceptance and signal workflow.
+- `POST /v1/restaurant-orders/{order_id}/reject` — persist rejection and signal workflow.
+- `POST /v1/restaurant-orders/{order_id}/ready` — mark ready and signal workflow.
+- `POST /v1/restaurant-orders/{order_id}/cancel` — idempotent compensation.
 - `GET /healthz`.
 
 ## Driver Ops — :8085
-- `POST /v1/drivers/{driver_id}/availability`
-- `POST /v1/assignments` — idempotently assign a driver to an order.
-- `POST /v1/assignments/{order_id}/picked-up`
-- `POST /v1/assignments/{order_id}/delivered`
+
+- `POST /v1/drivers/{driver_id}/availability` — set available/offline (internal).
+- `POST /v1/assignments` — idempotently assign a free driver to an order.
+- `POST /v1/assignments/{order_id}/picked-up` — persist pickup and signal workflow.
+- `POST /v1/assignments/{order_id}/delivered` — persist delivery and signal workflow.
+- `POST /v1/assignments/{order_id}/release` — idempotent compensation; picked-up assignments become `DELIVERY_EXCEPTION`.
 - `GET /healthz`.
 
-## Order API — :8086
-- `POST /v1/orders` — accepts customer, restaurant, items and idempotency key; starts Temporal workflow.
-- `GET /v1/orders/{id}` — read order status.
-- `GET /healthz`.
+## Workflow contract
 
-Workflow contract: `OrderWorkflow(order_id, customer_id, restaurant_id)`. Activities: `request_restaurant_acceptance`, `assign_driver`, `wait_for_restaurant_ready`, `complete_delivery`, `compensate_order`. Signals: `restaurant_ready`, `delivery_completed`, `cancel_order`.
+Workflow ID: `order-{order_id}`; Task Queue: `food-delivery-orders`.
+
+Signals: `restaurant_decision`, `restaurant_ready`, `driver_picked_up`, `delivery_completed`, `cancel_order`.
+
+Statuses: `PENDING → AWAITING_RESTAURANT_ACCEPTANCE → RESTAURANT_ACCEPTED → DRIVER_ASSIGNED → PREPARING → READY_FOR_PICKUP → OUT_FOR_DELIVERY → DELIVERED`. Failure terminals: `REJECTED`, `CANCELLED`, `FAILED`, `COMPENSATION_FAILED`.

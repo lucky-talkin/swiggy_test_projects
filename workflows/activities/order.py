@@ -1,27 +1,60 @@
 import json
 import os
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-def _post(base: str, path: str, payload: dict) -> dict:
-    req = Request(base.rstrip("/") + path, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=10) as response:
-        return json.loads(response.read() or b"{}")
+from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
-def request_restaurant_acceptance(order: dict) -> bool:
-    result = _post(os.getenv("RESTAURANT_OPS_URL", "http://localhost:8084"), f"/v1/restaurant-orders/{order['order_id']}/accept", order)
-    return result.get("accepted", True)
 
-def assign_driver(order: dict) -> dict:
-    return _post(os.getenv("DRIVER_OPS_URL", "http://localhost:8085"), "/v1/assignments", order)
+def _request(base: str, path: str, method: str, payload: dict, *, ignore_404: bool = False) -> dict:
+    request = Request(
+        base.rstrip("/") + path,
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Service-Token": os.getenv("INTERNAL_SERVICE_TOKEN", "dev-internal-token"),
+        },
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            raw = response.read()
+            return json.loads(raw) if raw else {}
+    except HTTPError as exc:
+        if ignore_404 and exc.code == 404:
+            return {"not_found": True}
+        detail = exc.read().decode(errors="replace")
+        non_retryable = 400 <= exc.code < 500 and exc.code not in (408, 409, 429)
+        raise ApplicationError(
+            f"{method} {path} returned HTTP {exc.code}: {detail}",
+            type=f"HTTP_{exc.code}",
+            non_retryable=non_retryable,
+        ) from exc
+    except (URLError, TimeoutError) as exc:
+        raise ApplicationError(f"Downstream request failed: {exc}", type="DOWNSTREAM_UNAVAILABLE") from exc
 
-def wait_for_restaurant_ready(context: dict) -> dict:
-    # Replace with a durable Temporal signal from Restaurant Ops.
-    return {"ready": True}
 
-def complete_delivery(context: dict) -> dict:
-    order_id = context["order"]["order_id"]
-    return _post(os.getenv("DRIVER_OPS_URL", "http://localhost:8085"), f"/v1/assignments/{order_id}/delivered", context)
+@activity.defn
+def create_restaurant_order(order: dict) -> dict:
+    return _request(os.getenv("RESTAURANT_OPS_URL", "http://localhost:8084"), "/v1/restaurant-orders", "POST", order)
 
-def compensate_order(context: dict) -> dict:
-    # Implement idempotent driver release and restaurant cancellation.
-    return {"compensated": True, "reason": context["reason"]}
+
+@activity.defn
+def assign_driver(request: dict) -> dict:
+    return _request(os.getenv("DRIVER_OPS_URL", "http://localhost:8085"), "/v1/assignments", "POST", request)
+
+
+@activity.defn
+def update_order_status(request: dict) -> dict:
+    return _request(os.getenv("ORDER_API_URL", "http://localhost:8086"), f"/internal/orders/{request['order_id']}/status", "PATCH", request)
+
+
+@activity.defn
+def cancel_restaurant_order(request: dict) -> dict:
+    return _request(os.getenv("RESTAURANT_OPS_URL", "http://localhost:8084"), f"/v1/restaurant-orders/{request['order_id']}/cancel", "POST", request, ignore_404=True)
+
+
+@activity.defn
+def release_driver_assignment(request: dict) -> dict:
+    return _request(os.getenv("DRIVER_OPS_URL", "http://localhost:8085"), f"/v1/assignments/{request['order_id']}/release", "POST", request, ignore_404=True)
