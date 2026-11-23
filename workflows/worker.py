@@ -1,14 +1,49 @@
 import asyncio
+import logging
 import os
+
 from temporalio.client import Client
 from temporalio.worker import Worker
-from workflows.order import OrderWorkflow
-from activities.order import assign_driver, compensate_order, complete_delivery, request_restaurant_acceptance, wait_for_restaurant_ready
 
-async def main():
-    client = await Client.connect(os.getenv("TEMPORAL_ADDRESS", "localhost:7233"), namespace=os.getenv("TEMPORAL_NAMESPACE", "default"))
-    worker = Worker(client, task_queue="food-delivery-orders", workflows=[OrderWorkflow], activities=[request_restaurant_acceptance, assign_driver, wait_for_restaurant_ready, complete_delivery, compensate_order])
+from workflows.activities.order import (
+    assign_driver,
+    cancel_restaurant_order,
+    create_restaurant_order,
+    release_driver_assignment,
+    update_order_status,
+)
+from workflows.workflows.order import OrderWorkflow
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("food-delivery-temporal-worker")
+
+
+async def main() -> None:
+    address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
+    namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
+    while True:
+        try:
+            client = await Client.connect(address, namespace=namespace)
+            break
+        except Exception:
+            logger.exception("Temporal is not ready at %s; retrying in 3 seconds", address)
+            await asyncio.sleep(3)
+
+    logger.info("Connected to Temporal at %s (namespace=%s)", address, namespace)
+    worker = Worker(
+        client,
+        task_queue=os.getenv("TEMPORAL_TASK_QUEUE", "food-delivery-orders"),
+        workflows=[OrderWorkflow],
+        activities=[
+            create_restaurant_order,
+            assign_driver,
+            update_order_status,
+            cancel_restaurant_order,
+            release_driver_assignment,
+        ],
+    )
     await worker.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
