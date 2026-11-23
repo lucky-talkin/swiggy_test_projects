@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: services/${{ matrix.service }}/go.mod
       - name: Test and compile
         working-directory: services/${{ matrix.service }}
-        run: go test ./...
+        run: go mod tidy && go test ./...
 
   compose-config:
     name: Validate Docker Compose
