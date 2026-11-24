@@ -11,6 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type driverDirectoryItem struct {
+	DriverID string `json:"driver_id"`
+	Status   string `json:"status"`
+}
+
 type driverAssignmentView struct {
 	OrderID          string          `json:"order_id"`
 	DriverID         string          `json:"driver_id"`
@@ -26,6 +31,7 @@ type driverAssignmentView struct {
 }
 
 func (a *app) registerPortalRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/portal/drivers", a.portalDrivers)
 	mux.HandleFunc("GET /v1/portal/drivers/{driver_id}", a.portalDriver)
 	mux.HandleFunc("GET /v1/portal/drivers/{driver_id}/assignments", a.portalAssignments)
 	mux.HandleFunc("GET /v1/portal/drivers/{driver_id}/events", a.portalEvents)
@@ -41,6 +47,35 @@ func (a *app) registerPortalRoutes(mux *http.ServeMux) {
 func (a *app) portalAuthorized(r *http.Request) bool {
 	return r.Header.Get("X-Portal-Token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token") ||
 		r.URL.Query().Get("token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token")
+}
+
+func (a *app) portalDrivers(w http.ResponseWriter, r *http.Request) {
+	if !a.portalAuthorized(r) {
+		fail(w, 401, "UNAUTHORIZED", "portal access denied")
+		return
+	}
+	rows, err := a.db.Query(r.Context(), `
+		SELECT driver_id, status FROM drivers ORDER BY driver_id
+	`)
+	if err != nil {
+		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	defer rows.Close()
+	drivers := make([]driverDirectoryItem, 0)
+	for rows.Next() {
+		var item driverDirectoryItem
+		if err := rows.Scan(&item.DriverID, &item.Status); err != nil {
+			fail(w, 500, "DATABASE_ERROR", err.Error())
+			return
+		}
+		drivers = append(drivers, item)
+	}
+	if err := rows.Err(); err != nil {
+		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	respond(w, 200, map[string]any{"drivers": drivers})
 }
 
 func (a *app) portalDriver(w http.ResponseWriter, r *http.Request) {
