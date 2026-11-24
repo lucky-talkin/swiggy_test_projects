@@ -105,6 +105,7 @@ export default function App() {
   return <div className="app-shell">
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><Utensils size={19}/></span><span>crave<span className="brand-dot">.</span></span></a>
+      <nav className="portal-shortcuts"><a href="/restaurant">Restaurant portal</a><a href="/driver">Driver app</a></nav>
       <div className="location"><MapPin size={18}/><div><strong>Delivering to</strong><input aria-label="Delivery city" value={city} onChange={e => setCity(e.target.value)} /></div></div>
       <button className="cart-button" onClick={() => setCartOpen(true)}><ShoppingBag size={18}/><span>Cart</span><b>{count}</b></button>
     </header>
