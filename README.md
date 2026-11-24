@@ -35,7 +35,7 @@ Infrastructure:
 
 APIs: user-auth 8081, catalog 8082, search 8083, restaurant-ops 8084, driver-ops 8085, order-api 8086.
 
-Temporal admin-tools initializes the separate Temporal persistence and visibility schemas in PostgreSQL and creates the `default` namespace before the order API and worker start. Go services apply their own migrations at startup. The local driver service seeds three demo drivers.
+Temporal admin-tools initializes the separate Temporal persistence and visibility schemas in PostgreSQL and creates the `default` namespace before the order API and worker start. Go services apply their own migrations at startup. Driver Ops does not create demo drivers. To add optional local demo drivers, run `psql "$POSTGRES_DSN" -f infra/postgres/seeds/dev_drivers.sql` explicitly after the database is ready. The Driver portal lists registered drivers and lets you select one.
 
 ## Search API
 
