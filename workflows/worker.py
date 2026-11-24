@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 
@@ -30,6 +31,13 @@ async def main() -> None:
             await asyncio.sleep(3)
 
     logger.info("Connected to Temporal at %s (namespace=%s)", address, namespace)
+    # These activities perform blocking HTTP calls with urllib. Temporal's Python
+    # worker requires an executor for synchronous activity functions.
+    max_workers = max(1, int(os.getenv("ACTIVITY_EXECUTOR_MAX_WORKERS", "10")))
+    activity_executor = ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="temporal-activity",
+    )
     worker = Worker(
         client,
         task_queue=os.getenv("TEMPORAL_TASK_QUEUE", "food-delivery-orders"),
@@ -41,8 +49,12 @@ async def main() -> None:
             cancel_restaurant_order,
             release_driver_assignment,
         ],
+        activity_executor=activity_executor,
     )
-    await worker.run()
+    try:
+        await worker.run()
+    finally:
+        activity_executor.shutdown(wait=True, cancel_futures=True)
 
 
 if __name__ == "__main__":
