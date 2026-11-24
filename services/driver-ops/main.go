@@ -24,9 +24,6 @@ func main() {
     if err!=nil { log.Fatal(err) }; defer db.Close()
     if err=db.Ping(ctx); err!=nil { log.Fatal(err) }
     if err=migrate(db); err!=nil { log.Fatal(err) }
-    for _,id:=range []string{"driver-demo-001","driver-demo-002","driver-demo-003"} {
-        if _,err=db.Exec(ctx,"INSERT INTO drivers(driver_id,status) VALUES($1,'AVAILABLE') ON CONFLICT(driver_id) DO NOTHING",id); err!=nil { log.Fatal(err) }
-    }
     a:=&app{db:db,orderAPI:env("ORDER_API_URL","http://localhost:8086"),token:env("INTERNAL_SERVICE_TOKEN","dev-internal-token")}
     go a.dispatchOutbox(ctx)
 
@@ -56,11 +53,23 @@ func (a *app) setAvailability(w http.ResponseWriter,r *http.Request) {
     target:="OFFLINE"; if req.Available { target="AVAILABLE" }
     id:=r.PathValue("driver_id")
     tag,err:=a.db.Exec(r.Context(),`
-        INSERT INTO drivers(driver_id,status) VALUES($1,$2)
-        ON CONFLICT(driver_id) DO UPDATE SET status=EXCLUDED.status,updated_at=NOW()
-        WHERE drivers.status IN ('AVAILABLE','OFFLINE')`,id,target)
+        UPDATE drivers SET status=$2,updated_at=NOW()
+        WHERE driver_id=$1 AND status IN ('AVAILABLE','OFFLINE')`,id,target)
     if err!=nil { fail(w,500,"DATABASE_ERROR",err.Error()); return }
-    if tag.RowsAffected()==0 { fail(w,409,"DRIVER_BUSY","cannot change availability while assigned or delivering"); return }
+    if tag.RowsAffected()==0 {
+        var current string
+        lookupErr:=a.db.QueryRow(r.Context(),"SELECT status FROM drivers WHERE driver_id=$1",id).Scan(&current)
+        if errors.Is(lookupErr,pgx.ErrNoRows) {
+            fail(w,404,"DRIVER_NOT_FOUND","driver is not registered")
+            return
+        }
+        if lookupErr!=nil {
+            fail(w,500,"DATABASE_ERROR",lookupErr.Error())
+            return
+        }
+        fail(w,409,"DRIVER_BUSY","cannot change availability while driver status is "+current)
+        return
+    }
     respond(w,200,map[string]string{"driver_id":id,"status":target})
 }
 

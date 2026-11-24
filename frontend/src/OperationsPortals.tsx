@@ -4,7 +4,6 @@ import './operations-portals.css'
 
 const viteEnv = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env
 const RESTAURANT_ID = viteEnv.VITE_RESTAURANT_ID || 'restaurant-1'
-const DRIVER_ID = viteEnv.VITE_DRIVER_ID || 'driver-demo-001'
 const PORTAL_TOKEN = viteEnv.VITE_PORTAL_ACCESS_TOKEN || 'dev-portal-token'
 
 type OrderItem = { item_id: string; quantity: number }
@@ -25,6 +24,7 @@ type DriverAssignment = RestaurantOrder & {
   assignment_status: string
 }
 type PortalProfile = { restaurant_id?: string; accepting_orders?: boolean; driver_id?: string; status?: string }
+type DriverDirectoryItem = { driver_id: string; status: string }
 
 const rupees = (minor: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(minor / 100)
 const pretty = (value: string) => value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
@@ -56,8 +56,8 @@ function liveStream(path: string, refresh: () => void) {
   return () => source.close()
 }
 
-function PortalHeader({ role }: { role: 'restaurant' | 'driver' }) {
-  return <header className="ops-topbar"><a href="/" className="ops-brand"><span className="ops-logo"><Utensils size={18}/></span> crave<span>.</span></a><nav><a href="/">Customer app</a><a className={role === 'restaurant' ? 'selected' : ''} href="/restaurant">Restaurant</a><a className={role === 'driver' ? 'selected' : ''} href="/driver">Driver</a></nav><div className="ops-user"><span className="ops-avatar">{role === 'restaurant' ? 'R' : 'D'}</span><div><b>{role === 'restaurant' ? RESTAURANT_ID : DRIVER_ID}</b><small>{role === 'restaurant' ? 'Restaurant console' : 'Delivery partner'}</small></div></div></header>
+function PortalHeader({ role, driverId }: { role: 'restaurant' | 'driver'; driverId?: string }) {
+  return <header className="ops-topbar"><a href="/" className="ops-brand"><span className="ops-logo"><Utensils size={18}/></span> crave<span>.</span></a><nav><a href="/">Customer app</a><a className={role === 'restaurant' ? 'selected' : ''} href="/restaurant">Restaurant</a><a className={role === 'driver' ? 'selected' : ''} href="/driver">Driver</a></nav><div className="ops-user"><span className="ops-avatar">{role === 'restaurant' ? 'R' : 'D'}</span><div><b>{role === 'restaurant' ? RESTAURANT_ID : driverId || 'Select a driver'}</b><small>{role === 'restaurant' ? 'Restaurant console' : 'Delivery partner'}</small></div></div></header>
 }
 
 function OrderBucket({ status }: { status: string }) {
@@ -141,18 +141,47 @@ function RestaurantPortal() {
 }
 
 function DriverPortal() {
+  const [drivers, setDrivers] = useState<DriverDirectoryItem[]>([])
+  const [driverId, setDriverId] = useState('')
   const [assignments, setAssignments] = useState<DriverAssignment[]>([])
   const [online, setOnline] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [directoryLoading, setDirectoryLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
+  const loadDrivers = useCallback(async (preferredId?: string) => {
+    const result = await api<{ drivers: DriverDirectoryItem[] }>('/driver-api/v1/portal/drivers')
+    const nextDrivers = result.drivers || []
+    setDrivers(nextDrivers)
+    setDriverId(current => {
+      if (preferredId && nextDrivers.some(d => d.driver_id === preferredId)) return preferredId
+      if (current && nextDrivers.some(d => d.driver_id === current)) return current
+      return nextDrivers.find(d => d.status === 'AVAILABLE')?.driver_id || nextDrivers[0]?.driver_id || ''
+    })
+  }, [])
+
+  useEffect(() => {
+    void loadDrivers().catch(e => setError(e instanceof Error ? e.message : 'Unable to load registered drivers'))
+      .finally(() => {
+        setDirectoryLoading(false)
+        setLoading(false)
+      })
+  }, [loadDrivers])
+
   const load = useCallback(async () => {
+    if (!driverId) {
+      setAssignments([])
+      setOnline(false)
+      setLoading(false)
+      return
+    }
+    setLoading(true)
     try {
       const [result, profile] = await Promise.all([
-        api<{ assignments: DriverAssignment[] }>(`/driver-api/v1/portal/drivers/${DRIVER_ID}/assignments`),
-        api<PortalProfile>(`/driver-api/v1/portal/drivers/${DRIVER_ID}`)
+        api<{ assignments: DriverAssignment[] }>(`/driver-api/v1/portal/drivers/${encodeURIComponent(driverId)}/assignments`),
+        api<PortalProfile>(`/driver-api/v1/portal/drivers/${encodeURIComponent(driverId)}`)
       ])
       setAssignments(result.assignments || [])
       setOnline(profile.status === 'AVAILABLE')
@@ -160,28 +189,40 @@ function DriverPortal() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load driver assignments')
     } finally { setLoading(false) }
-  }, [])
+  }, [driverId])
 
   useEffect(() => {
+    if (!driverId) return
     void load()
-    return liveStream(`/driver-api/v1/portal/drivers/${DRIVER_ID}/events`, () => { void load() })
-  }, [load])
+    return liveStream(`/driver-api/v1/portal/drivers/${encodeURIComponent(driverId)}/events`, () => { void load() })
+  }, [driverId, load])
+
+  const selectDriver = (nextId: string) => {
+    setDriverId(nextId)
+    setNotice('')
+    setError('')
+    setAssignments([])
+    setLoading(Boolean(nextId))
+  }
 
   const setAvailability = async () => {
+    if (!driverId) return
     try {
       const next = !online
-      await api(`/driver-api/v1/portal/drivers/${DRIVER_ID}/availability`, { method: 'POST', body: JSON.stringify({ available: next }) })
+      await api(`/driver-api/v1/portal/drivers/${encodeURIComponent(driverId)}/availability`, { method: 'POST', body: JSON.stringify({ available: next }) })
       setOnline(next)
       setNotice(next ? 'You are available for automatic assignment.' : 'You are now offline.')
+      await loadDrivers(driverId)
     } catch (e) { setNotice(e instanceof Error ? e.message : 'Could not update availability') }
   }
 
   const action = async (orderId: string, next: 'picked-up' | 'delivered') => {
+    if (!driverId) return
     setBusy(orderId)
     try {
-      await api(`/driver-api/v1/portal/drivers/${DRIVER_ID}/assignments/${orderId}/${next}`, { method: 'POST', body: '{}' })
+      await api(`/driver-api/v1/portal/drivers/${encodeURIComponent(driverId)}/assignments/${orderId}/${next}`, { method: 'POST', body: '{}' })
       setNotice(next === 'picked-up' ? 'Pickup confirmed. Order workflow updated.' : 'Delivery confirmed. Order workflow completed.')
-      await load()
+      await Promise.all([load(), loadDrivers(driverId)])
     } catch (e) { setNotice(e instanceof Error ? e.message : 'Unable to update assignment') }
     finally { setBusy(null) }
   }
@@ -190,18 +231,19 @@ function DriverPortal() {
   const completed = assignments.filter(a => finishedStatuses.has(a.assignment_status))
   const totalMinor = assignments.reduce((n, a) => n + a.total_amount_minor, 0)
 
-  return <div className="ops-shell"><PortalHeader role="driver"/><main className="ops-main">
-    <div className="ops-welcome"><div><div className="ops-kicker">DELIVERY PARTNER / BENGALURU</div><h1>Your delivery desk <span>✦</span></h1><p>Assignments are allocated by the Temporal order workflow.</p></div><button className={online ? 'online-toggle on' : 'online-toggle'} onClick={setAvailability}><span/>{online ? 'You’re available' : 'You’re offline'} <Power size={15}/></button></div>
+  return <div className="ops-shell"><PortalHeader role="driver" driverId={driverId}/><main className="ops-main">
+    <div className="ops-welcome"><div><div className="ops-kicker">DELIVERY PARTNER / BENGALURU</div><h1>Your delivery desk <span>✦</span></h1><p>Choose a registered driver. Assignments are allocated by the Temporal order workflow.</p></div><button className={online ? 'online-toggle on' : 'online-toggle'} onClick={setAvailability} disabled={!driverId || loading}><span/>{online ? 'You’re available' : 'You’re offline'} <Power size={15}/></button></div>
+    <section className="driver-picker"><label htmlFor="driver-select">Working as</label><select id="driver-select" value={driverId} onChange={e => selectDriver(e.target.value)} disabled={directoryLoading || drivers.length === 0}><option value="">{directoryLoading ? 'Loading drivers…' : 'No registered drivers'}</option>{drivers.map(driver => <option key={driver.driver_id} value={driver.driver_id}>{driver.driver_id} · {pretty(driver.status)}</option>)}</select><button type="button" onClick={() => { setDirectoryLoading(true); void loadDrivers(driverId).catch(e => setError(e instanceof Error ? e.message : 'Unable to refresh drivers')).finally(() => setDirectoryLoading(false)) }}>Refresh list</button></section>
     <section className="ops-stats"><article><span className="stat-icon orange"><Bike/></span><div><small>Assigned orders</small><strong>{assignments.length}</strong><em>For this driver</em></div></article><article><span className="stat-icon purple"><Route/></span><div><small>Active deliveries</small><strong>{active.length}</strong><em>Current workload</em></div></article><article><span className="stat-icon blue"><Check/></span><div><small>Completed</small><strong>{completed.length}</strong><em>Confirmed deliveries</em></div></article><article><span className="stat-icon green"><Wallet/></span><div><small>Order value handled</small><strong>{rupees(totalMinor)}</strong><em>Not driver earnings</em></div></article></section>
     {notice && <div className="ops-toast"><Check size={16}/>{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
-    {error && <div className="ops-error">{error}<button onClick={() => void load()}>Retry</button></div>}
-    <div className="ops-section-title"><div><h2>Your assignments</h2><p>Confirm pickup only after the restaurant marks the order ready.</p></div><span className="live-label"><i/> SSE CONNECTED / AUTO REFRESH</span></div>
-    {loading ? <div className="ops-empty"><LoaderCircle className="spin"/> Loading assignments…</div> : <div className="delivery-list">{assignments.map(item => {
+    {error && <div className="ops-error">{error}<button onClick={() => void loadDrivers(driverId).then(() => void load()).catch(e => setError(e instanceof Error ? e.message : 'Unable to reload'))}>Retry</button></div>}
+    <div className="ops-section-title"><div><h2>Your assignments</h2><p>Confirm pickup only after the restaurant marks the order ready.</p></div>{driverId && <span className="live-label"><i/> SSE CONNECTED / AUTO REFRESH</span>}</div>
+    {directoryLoading || loading ? <div className="ops-empty"><LoaderCircle className="spin"/> Loading driver data…</div> : !drivers.length ? <div className="ops-empty">No drivers are registered yet. Add drivers through onboarding or run the optional local seed script described in the README.</div> : <div className="delivery-list">{assignments.map(item => {
       const canPickup = item.assignment_status === 'ASSIGNED' && item.status === 'READY_FOR_PICKUP'
       const canDeliver = item.assignment_status === 'PICKED_UP' && item.status === 'OUT_FOR_DELIVERY'
       return <article className="delivery-card" key={item.order_id}><div className="delivery-card-main"><div className="delivery-symbol"><Bike/></div><div><span className="order-id">{item.order_id}</span><h3>Restaurant · {item.restaurant_id}</h3><p><Store size={13}/> {pretty(item.assignment_status)} <ArrowRight size={13}/> {pretty(item.status)}</p><small>Deliver to {item.customer_id} · {addressText(item.delivery_address)}</small><div className="driver-order-total">{item.items.reduce((n, i) => n + i.quantity, 0)} items · {rupees(item.total_amount_minor)}</div></div></div><div className="delivery-offer"><OrderBucket status={item.status}/>{canPickup && <button disabled={busy === item.order_id} onClick={() => void action(item.order_id, 'picked-up')}>Confirm pickup <ArrowRight size={14}/></button>}{canDeliver && <button disabled={busy === item.order_id} onClick={() => void action(item.order_id, 'delivered')}>Mark delivered <Check size={14}/></button>}{!canPickup && !canDeliver && <small>{finishedStatuses.has(item.assignment_status) ? 'Trip completed' : item.status === 'PREPARING' ? 'Waiting for kitchen' : 'Waiting for workflow'}</small>}</div></article>
-    })}{!assignments.length && <div className="ops-empty">{online ? 'You are available. New assignments appear automatically after restaurant acceptance.' : 'Go online to receive delivery assignments.'}</div>}</div>}
-    <div className="ops-footnote">Local demo driver identity: {DRIVER_ID}. Driver assignment is automatic; production deployment must bind this portal to the authenticated driver account.</div>
+    })}{!assignments.length && <div className="ops-empty">{online ? 'You are available. New assignments appear automatically after restaurant acceptance.' : 'No assignments for this driver yet. Go online to receive delivery assignments.'}</div>}</div>}
+    <div className="ops-footnote">Driver identity is selected from registered database records. Production deployment must bind this portal to the authenticated driver account.</div>
   </main></div>
 }
 
