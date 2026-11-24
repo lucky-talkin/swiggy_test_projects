@@ -1,71 +1,210 @@
-import { useMemo, useState } from 'react'
-import { Activity, ArrowLeft, ArrowRight, Bike, Check, ChefHat, Clock3, MapPin, PackageCheck, Phone, Power, Route, Store, Timer, Truck, Utensils, Wallet } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Activity, ArrowRight, Bike, Check, ChefHat, Clock3, LoaderCircle, MapPin, PackageCheck, Power, Route, Store, Timer, Utensils, Wallet } from 'lucide-react'
 import './operations-portals.css'
 
-type Stage = 'New' | 'Preparing' | 'Ready'
-type KitchenOrder = { id: string; customer: string; placed: string; eta: number; amount: number; address: string; items: { name: string; qty: number }[]; stage: Stage }
-type Delivery = { id: string; restaurant: string; customer: string; pickup: string; drop: string; distance: string; payout: number; status: 'Available' | 'To pickup' | 'To customer' | 'Delivered' }
+const RESTAURANT_ID = import.meta.env.VITE_RESTAURANT_ID || 'restaurant-1'
+const DRIVER_ID = import.meta.env.VITE_DRIVER_ID || 'driver-demo-001'
+const PORTAL_TOKEN = import.meta.env.VITE_PORTAL_ACCESS_TOKEN || 'dev-portal-token'
 
-const initialKitchen: KitchenOrder[] = [
-  { id: 'ORD-2048', customer: 'Aarav Sharma', placed: '2 min ago', eta: 25, amount: 468, address: 'Indiranagar, Bengaluru', items: [{ name: 'Masala dosa', qty: 2 }, { name: 'Filter coffee', qty: 1 }] },
-  { id: 'ORD-2047', customer: 'Diya Nair', placed: '6 min ago', eta: 30, amount: 329, address: 'Domlur, Bengaluru', items: [{ name: 'Paneer biryani', qty: 1 }, { name: 'Lassi', qty: 1 }] },
-  { id: 'ORD-2046', customer: 'Kabir Rao', placed: '11 min ago', eta: 20, amount: 285, address: 'Ulsoor, Bengaluru', items: [{ name: 'Idli vada combo', qty: 2 }] }
-].map((o, i) => ({ ...o, stage: (i === 0 ? 'New' : i === 1 ? 'Preparing' : 'Ready') as Stage }))
+type OrderItem = { item_id: string; quantity: number }
+type Address = { line1?: string; area?: string; city?: string; landmark?: string }
+type RestaurantOrder = {
+  order_id: string
+  restaurant_id: string
+  customer_id: string
+  items: OrderItem[]
+  delivery_address: Address
+  total_amount_minor: number
+  status: string
+  created_at: string
+  updated_at: string
+}
+type DriverAssignment = RestaurantOrder & {
+  driver_id: string
+  assignment_status: string
+}
+type PortalProfile = { restaurant_id?: string; accepting_orders?: boolean; driver_id?: string; status?: string }
 
-const initialDeliveries: Delivery[] = [
-  { id: 'DLV-8102', restaurant: 'MTR 1924', customer: 'Ananya R', pickup: 'Lalbagh Road', drop: 'Jayanagar 4th Block', distance: '3.2 km', payout: 68, status: 'Available' },
-  { id: 'DLV-8103', restaurant: 'The Rameshwaram Cafe', customer: 'Rahul K', pickup: 'Indiranagar 100ft Rd', drop: 'Domlur Layout', distance: '2.4 km', payout: 54, status: 'Available' },
-  { id: 'DLV-8104', restaurant: 'Truffles', customer: 'Meera S', pickup: 'St Marks Road', drop: 'Richmond Town', distance: '4.1 km', payout: 82, status: 'Available' }
-]
+const rupees = (minor: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(minor / 100)
+const pretty = (value: string) => value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+const timeAgo = (value: string) => {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000))
+  if (seconds < 60) return 'Just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  return `${Math.floor(seconds / 3600)} hr ago`
+}
+const addressText = (address?: Address) => [address?.line1, address?.area, address?.landmark, address?.city].filter(Boolean).join(', ') || 'Address not supplied'
+const activeStatuses = new Set(['ASSIGNED', 'PICKED_UP'])
+const finishedStatuses = new Set(['DELIVERED', 'RELEASED', 'DELIVERY_EXCEPTION'])
 
-const rupees = (n: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
+async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Portal-Token': PORTAL_TOKEN,
+      ...init.headers
+    }
+  })
+  const raw = await response.text()
+  const payload = raw ? JSON.parse(raw) : {}
+  if (!response.ok) throw new Error(payload.message || payload.error || `Request failed (${response.status})`)
+  return payload as T
+}
+
+function liveStream(path: string, refresh: () => void) {
+  const source = new EventSource(`${path}?token=${encodeURIComponent(PORTAL_TOKEN)}`)
+  source.addEventListener('refresh', refresh)
+  source.onerror = () => { /* EventSource automatically reconnects. */ }
+  return () => source.close()
+}
 
 function PortalHeader({ role }: { role: 'restaurant' | 'driver' }) {
-  return <header className="ops-topbar"><a href="/" className="ops-brand"><span className="ops-logo"><Utensils size={18}/></span> crave<span>.</span></a><nav><a href="/">Customer app</a><a className={role === 'restaurant' ? 'selected' : ''} href="/restaurant">Restaurant</a><a className={role === 'driver' ? 'selected' : ''} href="/driver">Driver</a></nav><div className="ops-user"><span className="ops-avatar">{role === 'restaurant' ? 'M' : 'R'}</span><div><b>{role === 'restaurant' ? 'MTR 1924' : 'Rider account'}</b><small>{role === 'restaurant' ? 'Restaurant manager' : 'Delivery partner'}</small></div></div></header>
+  return <header className="ops-topbar"><a href="/" className="ops-brand"><span className="ops-logo"><Utensils size={18}/></span> crave<span>.</span></a><nav><a href="/">Customer app</a><a className={role === 'restaurant' ? 'selected' : ''} href="/restaurant">Restaurant</a><a className={role === 'driver' ? 'selected' : ''} href="/driver">Driver</a></nav><div className="ops-user"><span className="ops-avatar">{role === 'restaurant' ? 'R' : 'D'}</span><div><b>{role === 'restaurant' ? RESTAURANT_ID : DRIVER_ID}</b><small>{role === 'restaurant' ? 'Restaurant console' : 'Delivery partner'}</small></div></div></header>
+}
+
+function OrderBucket({ status }: { status: string }) {
+  if (['PENDING', 'AWAITING_RESTAURANT_ACCEPTANCE'].includes(status)) return <span className="stage-pill new">{pretty(status)}</span>
+  if (['RESTAURANT_ACCEPTED', 'DRIVER_ASSIGNED', 'PREPARING'].includes(status)) return <span className="stage-pill preparing">{pretty(status)}</span>
+  if (['READY_FOR_PICKUP', 'OUT_FOR_DELIVERY'].includes(status)) return <span className="stage-pill ready">{pretty(status)}</span>
+  return <span className="stage-pill">{pretty(status)}</span>
 }
 
 function RestaurantPortal() {
-  const [orders, setOrders] = useState(initialKitchen)
-  const [tab, setTab] = useState<'All' | Stage>('All')
-  const [online, setOnline] = useState(true)
-  const [toast, setToast] = useState('')
-  const filtered = useMemo(() => tab === 'All' ? orders : orders.filter(o => o.stage === tab), [orders, tab])
-  const update = (id: string, stage: Stage) => { setOrders(old => old.map(o => o.id === id ? { ...o, stage } : o)); setToast(`${id} moved to ${stage.toLowerCase()}.`) }
-  const count = (stage: Stage) => orders.filter(o => o.stage === stage).length
+  const [orders, setOrders] = useState<RestaurantOrder[]>([])
+  const [accepting, setAccepting] = useState(true)
+  const [tab, setTab] = useState('All')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const [queue, profile] = await Promise.all([
+        api<{ orders: RestaurantOrder[] }>(`/restaurant-api/v1/portal/restaurants/${RESTAURANT_ID}/orders`),
+        api<PortalProfile>(`/restaurant-api/v1/portal/restaurants/${RESTAURANT_ID}`)
+      ])
+      setOrders(queue.orders || [])
+      setAccepting(profile.accepting_orders !== false)
+      setError('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to load restaurant orders')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    return liveStream(`/restaurant-api/v1/portal/restaurants/${RESTAURANT_ID}/events`, () => { void load() })
+  }, [load])
+
+  const setAvailability = async () => {
+    try {
+      const next = !accepting
+      await api(`/restaurant-api/v1/portal/restaurants/${RESTAURANT_ID}/availability`, { method: 'POST', body: JSON.stringify({ accepting_orders: next }) })
+      setAccepting(next)
+      setNotice(next ? 'Your restaurant is accepting new orders.' : 'New orders are paused.')
+    } catch (e) { setNotice(e instanceof Error ? e.message : 'Could not update availability') }
+  }
+
+  const transition = async (orderId: string, action: 'accept' | 'reject' | 'ready') => {
+    setBusy(orderId)
+    try {
+      await api(`/restaurant-api/v1/portal/restaurants/${RESTAURANT_ID}/orders/${orderId}/${action}`, { method: 'POST', body: '{}' })
+      setNotice(action === 'ready' ? `${orderId} marked ready. Driver will be notified by the order workflow.` : `${orderId} ${action}ed. Temporal workflow notified.`)
+      await load()
+    } catch (e) { setNotice(e instanceof Error ? e.message : `Unable to ${action} order`) }
+    finally { setBusy(null) }
+  }
+
+  const bucket = (status: string) => ['PENDING', 'AWAITING_RESTAURANT_ACCEPTANCE'].includes(status) ? 'New'
+    : ['RESTAURANT_ACCEPTED', 'DRIVER_ASSIGNED', 'PREPARING'].includes(status) ? 'Preparing'
+    : ['READY_FOR_PICKUP', 'OUT_FOR_DELIVERY'].includes(status) ? 'Ready' : 'Completed'
+  const filtered = useMemo(() => tab === 'All' ? orders : orders.filter(order => bucket(order.status) === tab), [orders, tab])
+  const newCount = orders.filter(o => bucket(o.status) === 'New').length
+  const preparingCount = orders.filter(o => bucket(o.status) === 'Preparing').length
+  const todayTotal = orders.reduce((n, o) => n + o.total_amount_minor, 0)
+
   return <div className="ops-shell"><PortalHeader role="restaurant"/><main className="ops-main">
-    <div className="ops-welcome"><div><div className="ops-kicker">RESTAURANT CONSOLE / BENGALURU</div><h1>Good evening, MTR team <span>✦</span></h1><p>Here’s what’s happening in your kitchen today.</p></div><button className={online ? 'online-toggle on' : 'online-toggle'} onClick={() => setOnline(!online)}><span/>{online ? 'Accepting orders' : 'Paused'} <Power size={15}/></button></div>
-    <section className="ops-stats"><article><span className="stat-icon orange"><PackageCheck/></span><div><small>Orders today</small><strong>38</strong><em>↑ 12% vs yesterday</em></div></article><article><span className="stat-icon purple"><Timer/></span><div><small>Awaiting action</small><strong>{count('New')}</strong><em>Needs your attention</em></div></article><article><span className="stat-icon blue"><ChefHat/></span><div><small>In preparation</small><strong>{count('Preparing')}</strong><em>Kitchen queue</em></div></article><article><span className="stat-icon green"><Wallet/></span><div><small>Today's sales</small><strong>₹12,840</strong><em>Across 38 orders</em></div></article></section>
-    <div className="ops-section-title"><div><h2>Order management</h2><p>Review incoming orders and keep customers updated.</p></div><span className="live-label"><i/> LIVE QUEUE</span></div>
-    {toast && <div className="ops-toast"><Check size={16}/>{toast}<button onClick={() => setToast('')}>Dismiss</button></div>}
-    <div className="ops-tabs">{(['All', 'New', 'Preparing', 'Ready'] as const).map(t => <button className={tab === t ? 'active' : ''} onClick={() => setTab(t)} key={t}>{t}<b>{t === 'All' ? orders.length : count(t as Stage)}</b></button>)}</div>
-    <div className="kitchen-list">{filtered.map(order => <article className="kitchen-card" key={order.id}><div className="kitchen-card-top"><div><span className="order-id">{order.id}</span><span className={`stage-pill ${order.stage.toLowerCase()}`}>{order.stage}</span></div><span className="order-time"><Clock3 size={14}/>{order.placed}</span></div><div className="kitchen-content"><div className="kitchen-items"><h3>{order.customer}</h3>{order.items.map(item => <div className="kitchen-item" key={item.name}><b>{item.qty}×</b>{item.name}</div>)}<div className="kitchen-address"><MapPin size={14}/>{order.address}</div></div><div className="kitchen-summary"><small>ORDER TOTAL</small><strong>{rupees(order.amount)}</strong><small>Suggested prep time</small><b>{order.eta} min</b></div></div><div className="kitchen-actions">{order.stage === 'New' && <><button className="decline-btn" onClick={() => { setOrders(old => old.filter(o => o.id !== order.id)); setToast(`${order.id} rejected in this UI demo.`) }}>Reject</button><button className="ops-primary" disabled={!online} onClick={() => update(order.id, 'Preparing')}>Accept order <ArrowRight size={15}/></button></>}{order.stage === 'Preparing' && <button className="ops-primary" onClick={() => update(order.id, 'Ready')}>Mark ready for pickup <Check size={15}/></button>}{order.stage === 'Ready' && <span className="ready-note"><Check size={15}/> Waiting for delivery partner pickup</span>}</div></article>)}{!filtered.length && <div className="ops-empty">No {tab.toLowerCase()} orders right now.</div>}</div>
-    <div className="ops-footnote">Demo UI · Actions update local sample data only. Connect these controls to the Order API to persist real orders.</div>
+    <div className="ops-welcome"><div><div className="ops-kicker">RESTAURANT CONSOLE / BENGALURU</div><h1>Order desk <span>✦</span></h1><p>Orders and status are read from the live Order API.</p></div><button className={accepting ? 'online-toggle on' : 'online-toggle'} onClick={setAvailability}><span/>{accepting ? 'Accepting orders' : 'Paused'} <Power size={15}/></button></div>
+    <section className="ops-stats"><article><span className="stat-icon orange"><PackageCheck/></span><div><small>Orders in queue</small><strong>{orders.length}</strong><em>Last 100 orders</em></div></article><article><span className="stat-icon purple"><Timer/></span><div><small>Awaiting action</small><strong>{newCount}</strong><em>Needs your attention</em></div></article><article><span className="stat-icon blue"><ChefHat/></span><div><small>In preparation</small><strong>{preparingCount}</strong><em>Kitchen queue</em></div></article><article><span className="stat-icon green"><Wallet/></span><div><small>Order value in queue</small><strong>{rupees(todayTotal)}</strong><em>Not a settlement statement</em></div></article></section>
+    <div className="ops-section-title"><div><h2>Order management</h2><p>Accept or reject orders, then mark them ready for pickup.</p></div><span className="live-label"><i/> SSE CONNECTED / AUTO REFRESH</span></div>
+    {notice && <div className="ops-toast"><Check size={16}/>{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
+    {error && <div className="ops-error">{error}<button onClick={() => void load()}>Retry</button></div>}
+    <div className="ops-tabs">{['All', 'New', 'Preparing', 'Ready', 'Completed'].map(t => <button className={tab === t ? 'active' : ''} onClick={() => setTab(t)} key={t}>{t}<b>{t === 'All' ? orders.length : orders.filter(o => bucket(o.status) === t).length}</b></button>)}</div>
+    {loading ? <div className="ops-empty"><LoaderCircle className="spin"/> Loading orders…</div> : <div className="kitchen-list">{filtered.map(order => <article className="kitchen-card" key={order.order_id}>
+      <div className="kitchen-card-top"><div><span className="order-id">{order.order_id}</span><OrderBucket status={order.status}/></div><span className="order-time"><Clock3 size={14}/>{timeAgo(order.created_at)}</span></div>
+      <div className="kitchen-content"><div className="kitchen-items"><h3>Customer · {order.customer_id}</h3>{order.items.map(item => <div className="kitchen-item" key={item.item_id}><b>{item.quantity}×</b>{item.item_id}</div>)}<div className="kitchen-address"><MapPin size={14}/>{addressText(order.delivery_address)}</div></div><div className="kitchen-summary"><small>ORDER TOTAL</small><strong>{rupees(order.total_amount_minor)}</strong><small>Last updated</small><b>{timeAgo(order.updated_at)}</b></div></div>
+      <div className="kitchen-actions">{bucket(order.status) === 'New' && <><button className="decline-btn" disabled={busy === order.order_id} onClick={() => void transition(order.order_id, 'reject')}>Reject</button><button className="ops-primary" disabled={!accepting || busy === order.order_id} onClick={() => void transition(order.order_id, 'accept')}>{busy === order.order_id ? 'Updating…' : 'Accept order'} <ArrowRight size={15}/></button></>}{order.status === 'PREPARING' && <button className="ops-primary" disabled={busy === order.order_id} onClick={() => void transition(order.order_id, 'ready')}>Mark ready for pickup <Check size={15}/></button>}{bucket(order.status) === 'Ready' && <span className="ready-note"><Check size={15}/> Driver pickup is managed by the workflow</span>}{bucket(order.status) === 'Completed' && <span className="ready-note">{pretty(order.status)}</span>}</div>
+    </article>)}{!filtered.length && <div className="ops-empty">No {tab.toLowerCase()} orders for {RESTAURANT_ID}.</div>}</div>}
+    <div className="ops-footnote">Local demo portal identity: {RESTAURANT_ID}. Replace the shared development token with authenticated restaurant sessions before deployment.</div>
   </main></div>
 }
 
 function DriverPortal() {
-  const [deliveries, setDeliveries] = useState(initialDeliveries)
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [online, setOnline] = useState(true)
-  const [toast, setToast] = useState('')
-  const active = deliveries.find(d => d.id === activeId)
-  const available = deliveries.filter(d => d.status === 'Available')
-  const complete = deliveries.filter(d => d.status === 'Delivered').length
-  const advance = () => {
-    if (!active) return
-    const next = active.status === 'To pickup' ? 'To customer' : 'Delivered'
-    setDeliveries(old => old.map(d => d.id === active.id ? { ...d, status: next } : d))
-    if (next === 'Delivered') { setToast(`${active.id} delivered. Nice work!`); setActiveId(null) }
-    else setToast('Pickup confirmed. Head to the customer.')
+  const [assignments, setAssignments] = useState<DriverAssignment[]>([])
+  const [online, setOnline] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const [result, profile] = await Promise.all([
+        api<{ assignments: DriverAssignment[] }>(`/driver-api/v1/portal/drivers/${DRIVER_ID}/assignments`),
+        api<PortalProfile>(`/driver-api/v1/portal/drivers/${DRIVER_ID}`)
+      ])
+      setAssignments(result.assignments || [])
+      setOnline(profile.status === 'AVAILABLE')
+      setError('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to load driver assignments')
+    } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    return liveStream(`/driver-api/v1/portal/drivers/${DRIVER_ID}/events`, () => { void load() })
+  }, [load])
+
+  const setAvailability = async () => {
+    try {
+      const next = !online
+      await api(`/driver-api/v1/portal/drivers/${DRIVER_ID}/availability`, { method: 'POST', body: JSON.stringify({ available: next }) })
+      setOnline(next)
+      setNotice(next ? 'You are available for automatic assignment.' : 'You are now offline.')
+    } catch (e) { setNotice(e instanceof Error ? e.message : 'Could not update availability') }
   }
+
+  const action = async (orderId: string, next: 'picked-up' | 'delivered') => {
+    setBusy(orderId)
+    try {
+      await api(`/driver-api/v1/portal/drivers/${DRIVER_ID}/assignments/${orderId}/${next}`, { method: 'POST', body: '{}' })
+      setNotice(next === 'picked-up' ? 'Pickup confirmed. Order workflow updated.' : 'Delivery confirmed. Order workflow completed.')
+      await load()
+    } catch (e) { setNotice(e instanceof Error ? e.message : 'Unable to update assignment') }
+    finally { setBusy(null) }
+  }
+
+  const active = assignments.filter(a => activeStatuses.has(a.assignment_status))
+  const completed = assignments.filter(a => finishedStatuses.has(a.assignment_status))
+  const totalMinor = assignments.reduce((n, a) => n + a.total_amount_minor, 0)
+
   return <div className="ops-shell"><PortalHeader role="driver"/><main className="ops-main">
-    <div className="ops-welcome"><div><div className="ops-kicker">DELIVERY PARTNER / BENGALURU</div><h1>Ride smart, deliver happy <span>✦</span></h1><p>Your shift at a glance. Stay safe out there.</p></div><button className={online ? 'online-toggle on' : 'online-toggle'} onClick={() => setOnline(!online)}><span/>{online ? 'You’re online' : 'You’re offline'} <Power size={15}/></button></div>
-    <section className="ops-stats"><article><span className="stat-icon orange"><Bike/></span><div><small>Deliveries today</small><strong>{6 + complete}</strong><em>Keep it going</em></div></article><article><span className="stat-icon purple"><Wallet/></span><div><small>Today's earnings</small><strong>₹486</strong><em>+ ₹{complete * 54} in this demo</em></div></article><article><span className="stat-icon blue"><Route/></span><div><small>Distance covered</small><strong>18.4 km</strong><em>Across completed trips</em></div></article><article><span className="stat-icon green"><Activity/></span><div><small>Acceptance rate</small><strong>94%</strong><em>Great performance</em></div></article></section>
-    {toast && <div className="ops-toast"><Check size={16}/>{toast}<button onClick={() => setToast('')}>Dismiss</button></div>}
-    {active ? <section className="active-delivery"><div className="active-heading"><div><div className="ops-kicker">YOUR ACTIVE DELIVERY</div><h2>{active.id}</h2></div><span className="stage-pill preparing">{active.status === 'To pickup' ? 'Go to restaurant' : 'On the way'}</span></div><div className="route-visual"><div className="route-stop"><span className="route-dot pickup"/><div><small>PICK UP FROM</small><b>{active.restaurant}</b><p>{active.pickup}</p></div></div><div className="route-connector"/><div className="route-stop"><span className="route-dot drop"/><div><small>DELIVER TO</small><b>{active.customer}</b><p>{active.drop}</p></div></div></div><div className="delivery-meta"><span><Route size={15}/>{active.distance}</span><span><Wallet size={15}/>{rupees(active.payout)} payout</span><span><Phone size={15}/>Customer contact</span></div><button className="ops-primary full" onClick={advance}>{active.status === 'To pickup' ? 'Confirm pickup' : 'Mark as delivered'} <ArrowRight size={16}/></button></section> : <section className="driver-map"><div className="map-art"><div className="map-roads"/><div className="map-pin pin-a"><Store size={17}/></div><div className="map-pin pin-b"><Bike size={17}/></div><div className="map-pin pin-c"><MapPin size={17}/></div><div className="map-route-line"/></div><div className="map-caption"><div><span className="live-label"><i/> YOUR DELIVERY ZONE</span><h3>Central Bengaluru</h3><p>Nearby orders will appear here when you’re online.</p></div><div className="zone-availability"><b>{available.length}</b><small>available<br/>orders</small></div></div></section>}
-    <div className="ops-section-title"><div><h2>{active ? 'Next available orders' : 'Available deliveries'}</h2><p>Choose a delivery that works for your route.</p></div><span className="live-label"><i/> {online ? 'MATCHING LIVE' : 'OFFLINE'}</span></div>
-    <div className="delivery-list">{deliveries.filter(d => d.status === 'Available').map(d => <article className="delivery-card" key={d.id}><div className="delivery-card-main"><div className="delivery-symbol"><Bike/></div><div><span className="order-id">{d.id}</span><h3>{d.restaurant}</h3><p><MapPin size={13}/>{d.pickup} <ArrowRight size={13}/> {d.drop}</p><small>{d.customer} · {d.distance}</small></div></div><div className="delivery-offer"><strong>{rupees(d.payout)}</strong><small>estimated payout</small><button disabled={!online || !!activeId} onClick={() => { setActiveId(d.id); setDeliveries(old => old.map(x => x.id === d.id ? { ...x, status: 'To pickup' } : x)); setToast(`You accepted ${d.id}. Head to pickup.`) }}>Accept <ArrowRight size={14}/></button></div></article>)}{!available.length && <div className="ops-empty">No available deliveries at the moment.</div>}</div>
-    <div className="ops-footnote">Demo UI · Delivery offers and status updates use local sample data. Driver assignment and GPS tracking need backend integration.</div>
+    <div className="ops-welcome"><div><div className="ops-kicker">DELIVERY PARTNER / BENGALURU</div><h1>Your delivery desk <span>✦</span></h1><p>Assignments are allocated by the Temporal order workflow.</p></div><button className={online ? 'online-toggle on' : 'online-toggle'} onClick={setAvailability}><span/>{online ? 'You’re available' : 'You’re offline'} <Power size={15}/></button></div>
+    <section className="ops-stats"><article><span className="stat-icon orange"><Bike/></span><div><small>Assigned orders</small><strong>{assignments.length}</strong><em>For this driver</em></div></article><article><span className="stat-icon purple"><Route/></span><div><small>Active deliveries</small><strong>{active.length}</strong><em>Current workload</em></div></article><article><span className="stat-icon blue"><Check/></span><div><small>Completed</small><strong>{completed.length}</strong><em>Confirmed deliveries</em></div></article><article><span className="stat-icon green"><Wallet/></span><div><small>Order value handled</small><strong>{rupees(totalMinor)}</strong><em>Not driver earnings</em></div></article></section>
+    {notice && <div className="ops-toast"><Check size={16}/>{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
+    {error && <div className="ops-error">{error}<button onClick={() => void load()}>Retry</button></div>}
+    <div className="ops-section-title"><div><h2>Your assignments</h2><p>Confirm pickup only after the restaurant marks the order ready.</p></div><span className="live-label"><i/> SSE CONNECTED / AUTO REFRESH</span></div>
+    {loading ? <div className="ops-empty"><LoaderCircle className="spin"/> Loading assignments…</div> : <div className="delivery-list">{assignments.map(item => {
+      const canPickup = item.assignment_status === 'ASSIGNED' && item.status === 'READY_FOR_PICKUP'
+      const canDeliver = item.assignment_status === 'PICKED_UP' && item.status === 'OUT_FOR_DELIVERY'
+      return <article className="delivery-card" key={item.order_id}><div className="delivery-card-main"><div className="delivery-symbol"><Bike/></div><div><span className="order-id">{item.order_id}</span><h3>Restaurant · {item.restaurant_id}</h3><p><Store size={13}/> {pretty(item.assignment_status)} <ArrowRight size={13}/> {pretty(item.status)}</p><small>Deliver to {item.customer_id} · {addressText(item.delivery_address)}</small><div className="driver-order-total">{item.items.reduce((n, i) => n + i.quantity, 0)} items · {rupees(item.total_amount_minor)}</div></div></div><div className="delivery-offer"><OrderBucket status={item.status}/>{canPickup && <button disabled={busy === item.order_id} onClick={() => void action(item.order_id, 'picked-up')}>Confirm pickup <ArrowRight size={14}/></button>}{canDeliver && <button disabled={busy === item.order_id} onClick={() => void action(item.order_id, 'delivered')}>Mark delivered <Check size={14}/></button>}{!canPickup && !canDeliver && <small>{finishedStatuses.has(item.assignment_status) ? 'Trip completed' : item.status === 'PREPARING' ? 'Waiting for kitchen' : 'Waiting for workflow'}</small>}</div></article>
+    })}{!assignments.length && <div className="ops-empty">{online ? 'You are available. New assignments appear automatically after restaurant acceptance.' : 'Go online to receive delivery assignments.'}</div>}</div>}
+    <div className="ops-footnote">Local demo driver identity: {DRIVER_ID}. Driver assignment is automatic; production deployment must bind this portal to the authenticated driver account.</div>
   </main></div>
 }
 
