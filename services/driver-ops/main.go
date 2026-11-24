@@ -37,6 +37,7 @@ func main() {
     mux.HandleFunc("POST /v1/assignments/{order_id}/picked-up",func(w http.ResponseWriter,r *http.Request){a.transition(w,r,"PICKED_UP","driver_picked_up")})
     mux.HandleFunc("POST /v1/assignments/{order_id}/delivered",func(w http.ResponseWriter,r *http.Request){a.transition(w,r,"DELIVERED","delivery_completed")})
     mux.HandleFunc("POST /v1/assignments/{order_id}/release",a.release)
+    a.registerPortalRoutes(mux)
     port:=env("PORT","8085")
     log.Printf("driver-ops listening on :%s",port)
     log.Fatal((&http.Server{Addr:":"+port,Handler:mux,ReadHeaderTimeout:5*time.Second}).ListenAndServe())
