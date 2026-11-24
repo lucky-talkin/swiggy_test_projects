@@ -55,6 +55,10 @@ func (a *app) create(w http.ResponseWriter,r *http.Request) {
     var req createRequest
     if err:=json.NewDecoder(http.MaxBytesReader(w,r.Body,1<<20)).Decode(&req); err!=nil { fail(w,400,"INVALID_JSON",err.Error()); return }
     if req.OrderID=="" || req.RestaurantID=="" { fail(w,400,"VALIDATION_ERROR","order_id and restaurant_id are required"); return }
+    var accepting bool
+    settingsErr:=a.db.QueryRow(r.Context(),"SELECT accepting_orders FROM restaurant_settings WHERE restaurant_id=$1",req.RestaurantID).Scan(&accepting)
+    if settingsErr!=nil && !errors.Is(settingsErr,pgx.ErrNoRows) { fail(w,500,"DATABASE_ERROR",settingsErr.Error()); return }
+    if settingsErr==nil && !accepting { fail(w,409,"RESTAURANT_NOT_ACCEPTING","restaurant is not accepting orders"); return }
     if len(req.Items)==0 { req.Items=json.RawMessage(`[]`) }
     if !json.Valid(req.Items) { fail(w,400,"VALIDATION_ERROR","items must be valid JSON"); return }
     _,err:=a.db.Exec(r.Context(),`
