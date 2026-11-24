@@ -20,6 +20,7 @@ type driverAssignmentView struct {
 	DeliveryAddress  json.RawMessage `json:"delivery_address"`
 	TotalAmountMinor int64           `json:"total_amount_minor"`
 	Status           string          `json:"status"`
+	AssignmentStatus string          `json:"assignment_status"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -87,7 +88,7 @@ func (a *app) portalAssignments(w http.ResponseWriter, r *http.Request) {
 func (a *app) listDriverAssignments(ctx context.Context, driverID string) ([]driverAssignmentView, error) {
 	rows, err := a.db.Query(ctx, `
 		SELECT da.order_id, da.driver_id, da.restaurant_id, fo.customer_id, fo.items, fo.delivery_address,
-		       fo.total_amount_minor, da.status, da.created_at, da.updated_at
+		       fo.total_amount_minor, fo.status, da.status, da.created_at, da.updated_at
 		FROM driver_assignments da
 		JOIN food_orders fo ON fo.order_id=da.order_id
 		WHERE da.driver_id=$1
@@ -102,7 +103,7 @@ func (a *app) listDriverAssignments(ctx context.Context, driverID string) ([]dri
 		var item driverAssignmentView
 		var items, address []byte
 		if err := rows.Scan(&item.OrderID, &item.DriverID, &item.RestaurantID, &item.CustomerID,
-			&items, &address, &item.TotalAmountMinor, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&items, &address, &item.TotalAmountMinor, &item.Status, &item.AssignmentStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		item.Items = json.RawMessage(items)
@@ -191,6 +192,7 @@ func (a *app) latestDriverUpdate(ctx context.Context, driverID string) (time.Tim
 	err := a.db.QueryRow(ctx, `
 		SELECT GREATEST(
 			COALESCE((SELECT MAX(updated_at) FROM driver_assignments WHERE driver_id=$1), 'epoch'::timestamptz),
+			COALESCE((SELECT MAX(fo.updated_at) FROM driver_assignments da JOIN food_orders fo ON fo.order_id=da.order_id WHERE da.driver_id=$1), 'epoch'::timestamptz),
 			COALESCE((SELECT updated_at FROM drivers WHERE driver_id=$1), 'epoch'::timestamptz)
 		)`, driverID).Scan(&updated)
 	return updated, err
