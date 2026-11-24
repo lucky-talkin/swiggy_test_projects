@@ -40,7 +40,8 @@ func (a *app) registerPortalRoutes(mux *http.ServeMux) {
 }
 
 func (a *app) portalAuthorized(r *http.Request) bool {
-	return r.Header.Get("X-Portal-Token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token")
+	return r.Header.Get("X-Portal-Token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token") ||
+		r.URL.Query().Get("token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token")
 }
 
 func (a *app) portalRestaurant(w http.ResponseWriter, r *http.Request) {
@@ -100,11 +101,12 @@ func (a *app) portalOrders(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) listRestaurantOrders(ctx context.Context, restaurantID string) ([]restaurantOrderView, error) {
 	rows, err := a.db.Query(ctx, `
-		SELECT order_id, restaurant_id, customer_id, items, delivery_address,
-		       total_amount_minor, status, created_at, updated_at
-		FROM restaurant_orders
-		WHERE restaurant_id=$1
-		ORDER BY created_at DESC
+		SELECT ro.order_id, ro.restaurant_id, ro.customer_id, fo.items, fo.delivery_address,
+		       fo.total_amount_minor, fo.status, fo.created_at, fo.updated_at
+		FROM restaurant_orders ro
+		JOIN food_orders fo ON fo.order_id=ro.order_id
+		WHERE ro.restaurant_id=$1
+		ORDER BY fo.created_at DESC
 		LIMIT 100`, restaurantID)
 	if err != nil {
 		return nil, err
@@ -132,12 +134,16 @@ func (a *app) portalTransition(w http.ResponseWriter, r *http.Request, target, s
 	}
 	var owner string
 	err := a.db.QueryRow(r.Context(), "SELECT restaurant_id FROM restaurant_orders WHERE order_id=$1", r.PathValue("order_id")).Scan(&owner)
-	if errors.Is(err, pgx.ErrNoRows) || owner != r.PathValue("restaurant_id") {
+	if errors.Is(err, pgx.ErrNoRows) {
 		fail(w, 404, "RESTAURANT_ORDER_NOT_FOUND", "order does not belong to this restaurant")
 		return
 	}
 	if err != nil {
 		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	if owner != r.PathValue("restaurant_id") {
+		fail(w, 404, "RESTAURANT_ORDER_NOT_FOUND", "order does not belong to this restaurant")
 		return
 	}
 	r.Header.Set("X-Service-Token", a.token)
@@ -198,8 +204,10 @@ func (a *app) portalEvents(w http.ResponseWriter, r *http.Request) {
 func (a *app) latestRestaurantUpdate(ctx context.Context, restaurantID string) (time.Time, error) {
 	var updated time.Time
 	err := a.db.QueryRow(ctx, `
-		SELECT COALESCE(MAX(updated_at), 'epoch'::timestamptz)
-		FROM restaurant_orders WHERE restaurant_id=$1`, restaurantID).Scan(&updated)
+		SELECT COALESCE(MAX(fo.updated_at), 'epoch'::timestamptz)
+		FROM restaurant_orders ro
+		JOIN food_orders fo ON fo.order_id=ro.order_id
+		WHERE ro.restaurant_id=$1`, restaurantID).Scan(&updated)
 	return updated, err
 }
 
