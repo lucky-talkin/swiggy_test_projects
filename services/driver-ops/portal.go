@@ -38,7 +38,8 @@ func (a *app) registerPortalRoutes(mux *http.ServeMux) {
 }
 
 func (a *app) portalAuthorized(r *http.Request) bool {
-	return r.Header.Get("X-Portal-Token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token")
+	return r.Header.Get("X-Portal-Token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token") ||
+		r.URL.Query().Get("token") == env("PORTAL_ACCESS_TOKEN", "dev-portal-token")
 }
 
 func (a *app) portalDriver(w http.ResponseWriter, r *http.Request) {
@@ -85,11 +86,12 @@ func (a *app) portalAssignments(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) listDriverAssignments(ctx context.Context, driverID string) ([]driverAssignmentView, error) {
 	rows, err := a.db.Query(ctx, `
-		SELECT order_id, driver_id, restaurant_id, customer_id, items, delivery_address,
-		       total_amount_minor, status, created_at, updated_at
-		FROM driver_assignments
-		WHERE driver_id=$1
-		ORDER BY updated_at DESC
+		SELECT da.order_id, da.driver_id, da.restaurant_id, fo.customer_id, fo.items, fo.delivery_address,
+		       fo.total_amount_minor, da.status, da.created_at, da.updated_at
+		FROM driver_assignments da
+		JOIN food_orders fo ON fo.order_id=da.order_id
+		WHERE da.driver_id=$1
+		ORDER BY da.updated_at DESC
 		LIMIT 100`, driverID)
 	if err != nil {
 		return nil, err
@@ -117,12 +119,16 @@ func (a *app) portalTransition(w http.ResponseWriter, r *http.Request, target, s
 	}
 	var owner string
 	err := a.db.QueryRow(r.Context(), "SELECT driver_id FROM driver_assignments WHERE order_id=$1", r.PathValue("order_id")).Scan(&owner)
-	if errors.Is(err, pgx.ErrNoRows) || owner != r.PathValue("driver_id") {
+	if errors.Is(err, pgx.ErrNoRows) {
 		fail(w, 404, "ASSIGNMENT_NOT_FOUND", "assignment does not belong to this driver")
 		return
 	}
 	if err != nil {
 		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	if owner != r.PathValue("driver_id") {
+		fail(w, 404, "ASSIGNMENT_NOT_FOUND", "assignment does not belong to this driver")
 		return
 	}
 	r.Header.Set("X-Service-Token", a.token)
