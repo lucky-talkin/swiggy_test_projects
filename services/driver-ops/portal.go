@@ -197,3 +197,8 @@ func (a *app) latestDriverUpdate(ctx context.Context, driverID string) (time.Tim
 		)`, driverID).Scan(&updated)
 	return updated, err
 }
+
+func writePortalEvent(w http.ResponseWriter, name string, payload any) {
+	data, _ := json.Marshal(payload)
+	fmt.Fprintf(w, "event: %s\\ndata: %s\\n\\n", name, data)
+}
