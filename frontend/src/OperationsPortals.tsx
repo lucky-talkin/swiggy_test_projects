@@ -164,7 +164,10 @@ function DriverPortal() {
 
   useEffect(() => {
     void loadDrivers().catch(e => setError(e instanceof Error ? e.message : 'Unable to load registered drivers'))
-      .finally(() => setDirectoryLoading(false))
+      .finally(() => {
+        setDirectoryLoading(false)
+        setLoading(false)
+      })
   }, [loadDrivers])
 
   const load = useCallback(async () => {
