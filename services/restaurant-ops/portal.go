@@ -204,10 +204,10 @@ func (a *app) portalEvents(w http.ResponseWriter, r *http.Request) {
 func (a *app) latestRestaurantUpdate(ctx context.Context, restaurantID string) (time.Time, error) {
 	var updated time.Time
 	err := a.db.QueryRow(ctx, `
-		SELECT COALESCE(MAX(fo.updated_at), 'epoch'::timestamptz)
-		FROM restaurant_orders ro
-		JOIN food_orders fo ON fo.order_id=ro.order_id
-		WHERE ro.restaurant_id=$1`, restaurantID).Scan(&updated)
+		SELECT GREATEST(
+			COALESCE((SELECT MAX(fo.updated_at) FROM restaurant_orders ro JOIN food_orders fo ON fo.order_id=ro.order_id WHERE ro.restaurant_id=$1), 'epoch'::timestamptz),
+			COALESCE((SELECT updated_at FROM restaurant_settings WHERE restaurant_id=$1), 'epoch'::timestamptz)
+		)`, restaurantID).Scan(&updated)
 	return updated, err
 }
 
