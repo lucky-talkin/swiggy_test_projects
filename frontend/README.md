@@ -18,6 +18,8 @@ Vite proxies browser requests to the local services:
 - `/order-api/*` → Order API at `localhost:8086`
 - `/catalog-api/*` → Catalog API at `localhost:8082`
 - `/auth-api/*` → User/Auth API at `localhost:8081`
+- `/restaurant-api/*` → Restaurant Ops at `localhost:8084`
+- `/driver-api/*` → Driver Ops at `localhost:8085`
 
 Override targets with environment variables; see `.env.example`.
 
@@ -31,6 +33,8 @@ The search API index document includes restaurant and menu-item metadata. The UI
 
 ## Backend limitations
 
-The current repository still scaffolds User/Auth registration and login and Catalog restaurant read/write endpoints as not implemented. This frontend therefore integrates the implemented Search and Order APIs; it does not pretend login, catalog menu retrieval, payment, or live courier tracking work. The Order API requires an `Idempotency-Key`; the frontend generates a fresh UUID per checkout. Order amounts are sent in minor currency units (paise for INR).
+The Restaurant portal is at `/restaurant`; the Driver portal is at `/driver`. They load persistent order/assignment records from the Go services and refresh from SSE events. Copy `.env.example` to `.env` to override demo restaurant, driver, and portal token values. The development token is shared and must not be used as production authentication.
+
+The current repository still scaffolds User/Auth registration and login and Catalog restaurant read/write endpoints as not implemented. This frontend therefore integrates the implemented Search and Order APIs; it does not pretend login, catalog menu retrieval, payment, or live courier tracking work. The Order API requires an `Idempotency-Key`; the frontend generates a fresh UUID per checkout (with a fallback for browsers without `crypto.randomUUID()`). Customer order tracking subscribes to the Order API SSE endpoint and retains polling as a fallback. Order amounts are sent in minor currency units (paise for INR).
 
 Search results are only as complete as the Elasticsearch `food-search-v1` index. Populate it through the catalog/indexing path before expecting restaurant results.

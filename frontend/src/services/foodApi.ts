@@ -20,6 +20,13 @@ export interface CreateOrderRequest {
   currency: 'INR'
 }
 
+function generateIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `order-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 export const foodApi = createApi({
   reducerPath: 'foodApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
@@ -31,7 +38,7 @@ export const foodApi = createApi({
     createOrder: build.mutation<Order, CreateOrderRequest>({
       query: body => ({
         url: '/order-api/v1/orders', method: 'POST', body,
-        headers: { 'Idempotency-Key': crypto.randomUUID() }
+        headers: { 'Idempotency-Key': generateIdempotencyKey() }
       }),
       invalidatesTags: ['Order']
     }),

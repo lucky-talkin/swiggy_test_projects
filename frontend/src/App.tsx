@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { skipToken } from '@reduxjs/toolkit/query'
 import { useDispatch, useSelector } from 'react-redux'
 import { ArrowLeft, ArrowRight, Bike, Clock3, LoaderCircle, MapPin, Minus, Plus, Search, ShoppingBag, Star, Utensils, X } from 'lucide-react'
@@ -41,10 +41,17 @@ export default function App() {
   const { data, isLoading, isFetching, error, refetch } = useSearchFoodQuery(searchParams)
   const [createOrder, createState] = useCreateOrderMutation()
   const [cancelOrder, cancelState] = useCancelOrderMutation()
-  const { data: order, error: orderError, isFetching: orderFetching } = useGetOrderQuery(orderId ?? skipToken, {
+  const { data: order, error: orderError, isFetching: orderFetching, refetch: refetchOrder } = useGetOrderQuery(orderId ?? skipToken, {
     pollingInterval: orderId ? 4000 : 0,
     skipPollingIfUnfocused: true
   })
+
+  useEffect(() => {
+    if (!orderId) return
+    const events = new EventSource(`/order-api/v1/orders/${encodeURIComponent(orderId)}/events`)
+    events.addEventListener('order', () => { void refetchOrder() })
+    return () => events.close()
+  }, [orderId, refetchOrder])
 
   const foods = data?.items ?? []
   const count = cart.reduce((sum, item) => sum + item.quantity, 0)

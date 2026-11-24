@@ -148,13 +148,13 @@ services:
 
   restaurant-ops:
     build: ./services/restaurant-ops
-    environment: ["PORT=8084", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "ORDER_API_URL=http://order-api:8086", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}"]
+    environment: ["PORT=8084", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "ORDER_API_URL=http://order-api:8086", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "PORTAL_ACCESS_TOKEN=${PORTAL_ACCESS_TOKEN:-dev-portal-token}"]
     ports: ["8084:8084"]
     depends_on: [postgres, order-api]
 
   driver-ops:
     build: ./services/driver-ops
-    environment: ["PORT=8085", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "ORDER_API_URL=http://order-api:8086", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}"]
+    environment: ["PORT=8085", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "ORDER_API_URL=http://order-api:8086", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "PORTAL_ACCESS_TOKEN=${PORTAL_ACCESS_TOKEN:-dev-portal-token}"]
     ports: ["8085:8085"]
     depends_on: [postgres, order-api]
 

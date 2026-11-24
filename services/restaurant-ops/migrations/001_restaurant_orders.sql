@@ -20,3 +20,9 @@ CREATE TABLE IF NOT EXISTS restaurant_signal_outbox (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_restaurant_signal_outbox_pending ON restaurant_signal_outbox(dispatched_at,locked_until,outbox_id);
+
+CREATE TABLE IF NOT EXISTS restaurant_settings (
+    restaurant_id TEXT PRIMARY KEY,
+    accepting_orders BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
