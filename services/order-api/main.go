@@ -77,6 +77,7 @@ func main() {
     mux.HandleFunc("GET /healthz",a.health)
     mux.HandleFunc("POST /v1/orders",a.createOrder)
     mux.HandleFunc("GET /v1/orders/{id}",a.getOrder)
+    mux.HandleFunc("GET /v1/orders/{id}/events",a.orderEvents)
     mux.HandleFunc("POST /v1/orders/{id}/cancel",a.cancelOrder)
     mux.HandleFunc("POST /internal/orders/{id}/signals/{signal}",a.signalWorkflow)
     mux.HandleFunc("PATCH /internal/orders/{id}/status",a.updateStatus)
