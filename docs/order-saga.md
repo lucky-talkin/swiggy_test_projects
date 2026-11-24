@@ -72,7 +72,7 @@ curl -X POST http://localhost:8084/v1/restaurant-orders/$ORDER_ID/accept -H "X-S
 curl -X POST http://localhost:8084/v1/restaurant-orders/$ORDER_ID/ready -H "X-Service-Token: $TOKEN"
 ```
 
-For local testing, explicitly seed demo drivers once with `psql "$POSTGRES_DSN" -f infra/postgres/seeds/dev_drivers.sql` (or use your local PostgreSQL connection). The Driver Ops service never creates sample drivers at startup. Select a registered driver in the Driver portal, then pick up and deliver:
+For local testing, explicitly seed demo drivers once with `docker compose exec -T postgres psql -U food -d food_delivery < infra/postgres/seeds/dev_drivers.sql` (or use your local PostgreSQL connection). The Driver Ops service never creates sample drivers at startup. Select a registered driver in the Driver portal, then pick up and deliver:
 
 ```bash
 curl -X POST http://localhost:8085/v1/assignments/$ORDER_ID/picked-up -H "X-Service-Token: $TOKEN"
