@@ -19,6 +19,7 @@ type restaurantOrderView struct {
 	DeliveryAddress  json.RawMessage `json:"delivery_address"`
 	TotalAmountMinor int64           `json:"total_amount_minor"`
 	Status           string          `json:"status"`
+	TicketCreated    bool            `json:"ticket_created"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -101,11 +102,13 @@ func (a *app) portalOrders(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) listRestaurantOrders(ctx context.Context, restaurantID string) ([]restaurantOrderView, error) {
 	rows, err := a.db.Query(ctx, `
-		SELECT ro.order_id, ro.restaurant_id, ro.customer_id, fo.items, fo.delivery_address,
-		       fo.total_amount_minor, fo.status, fo.created_at, fo.updated_at
-		FROM restaurant_orders ro
-		JOIN food_orders fo ON fo.order_id=ro.order_id
-		WHERE ro.restaurant_id=$1
+		SELECT fo.order_id, fo.restaurant_id, fo.customer_id, fo.items, fo.delivery_address,
+		       fo.total_amount_minor, fo.status, fo.created_at, fo.updated_at,
+		       (ro.order_id IS NOT NULL) AS ticket_created
+		FROM food_orders fo
+		LEFT JOIN restaurant_orders ro
+		  ON ro.order_id=fo.order_id AND ro.restaurant_id=fo.restaurant_id
+		WHERE fo.restaurant_id=$1
 		ORDER BY fo.created_at DESC
 		LIMIT 100`, restaurantID)
 	if err != nil {
@@ -117,7 +120,8 @@ func (a *app) listRestaurantOrders(ctx context.Context, restaurantID string) ([]
 		var item restaurantOrderView
 		var items, address []byte
 		if err := rows.Scan(&item.OrderID, &item.RestaurantID, &item.CustomerID, &items,
-			&address, &item.TotalAmountMinor, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&address, &item.TotalAmountMinor, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+			&item.TicketCreated); err != nil {
 			return nil, err
 		}
 		item.Items = json.RawMessage(items)
@@ -132,8 +136,25 @@ func (a *app) portalTransition(w http.ResponseWriter, r *http.Request, target, s
 		fail(w, 401, "UNAUTHORIZED", "portal access denied")
 		return
 	}
-	var owner string
-	err := a.db.QueryRow(r.Context(), "SELECT restaurant_id FROM restaurant_orders WHERE order_id=$1", r.PathValue("order_id")).Scan(&owner)
+	// food_orders is the canonical order record. The Temporal workflow normally
+	// creates the restaurant projection before waiting for a decision, but the
+	// portal must still expose and reconcile an order if that activity is delayed.
+	orderID := r.PathValue("order_id")
+	restaurantID := r.PathValue("restaurant_id")
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var owner, customerID, canonicalStatus string
+	var items []byte
+	err = tx.QueryRow(r.Context(), `
+		SELECT restaurant_id, customer_id, items, status
+		FROM food_orders WHERE order_id=$1 FOR SHARE`, orderID).Scan(
+		&owner, &customerID, &items, &canonicalStatus,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		fail(w, 404, "RESTAURANT_ORDER_NOT_FOUND", "order does not belong to this restaurant")
 		return
@@ -142,10 +163,51 @@ func (a *app) portalTransition(w http.ResponseWriter, r *http.Request, target, s
 		fail(w, 500, "DATABASE_ERROR", err.Error())
 		return
 	}
-	if owner != r.PathValue("restaurant_id") {
+	if owner != restaurantID {
 		fail(w, 404, "RESTAURANT_ORDER_NOT_FOUND", "order does not belong to this restaurant")
 		return
 	}
+
+	// Rebuild the restaurant-owned projection using the canonical lifecycle
+	// state so repeated portal actions remain valid even after a delayed create.
+	ticketStatus := "PENDING"
+	switch canonicalStatus {
+	case "RESTAURANT_ACCEPTED", "DRIVER_ASSIGNED", "PREPARING":
+		ticketStatus = "ACCEPTED"
+	case "READY_FOR_PICKUP", "OUT_FOR_DELIVERY", "DELIVERED":
+		ticketStatus = "READY"
+	case "REJECTED":
+		ticketStatus = "REJECTED"
+	case "CANCELLED", "FAILED", "COMPENSATION_FAILED":
+		ticketStatus = "CANCELLED"
+	}
+	_, err = tx.Exec(r.Context(), `
+		INSERT INTO restaurant_orders(order_id, restaurant_id, customer_id, items, status)
+		VALUES($1, $2, $3, $4, $5)
+		ON CONFLICT(order_id) DO NOTHING`,
+		orderID, restaurantID, customerID, items, ticketStatus,
+	)
+	if err != nil {
+		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	var ticketOwner string
+	err = tx.QueryRow(r.Context(), `
+		SELECT restaurant_id FROM restaurant_orders WHERE order_id=$1 FOR UPDATE`, orderID,
+	).Scan(&ticketOwner)
+	if err != nil {
+		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+	if ticketOwner != restaurantID {
+		fail(w, 404, "RESTAURANT_ORDER_NOT_FOUND", "order does not belong to this restaurant")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		fail(w, 500, "DATABASE_ERROR", err.Error())
+		return
+	}
+
 	r.Header.Set("X-Service-Token", a.token)
 	a.transition(w, r, target, signal, payload)
 }
@@ -205,7 +267,8 @@ func (a *app) latestRestaurantUpdate(ctx context.Context, restaurantID string) (
 	var updated time.Time
 	err := a.db.QueryRow(ctx, `
 		SELECT GREATEST(
-			COALESCE((SELECT MAX(fo.updated_at) FROM restaurant_orders ro JOIN food_orders fo ON fo.order_id=ro.order_id WHERE ro.restaurant_id=$1), 'epoch'::timestamptz),
+			COALESCE((SELECT MAX(updated_at) FROM food_orders WHERE restaurant_id=$1), 'epoch'::timestamptz),
+			COALESCE((SELECT MAX(updated_at) FROM restaurant_orders WHERE restaurant_id=$1), 'epoch'::timestamptz),
 			COALESCE((SELECT updated_at FROM restaurant_settings WHERE restaurant_id=$1), 'epoch'::timestamptz)
 		)`, restaurantID).Scan(&updated)
 	return updated, err
