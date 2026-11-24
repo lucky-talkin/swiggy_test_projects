@@ -38,6 +38,7 @@ func main() {
     mux.HandleFunc("POST /v1/restaurant-orders/{order_id}/reject",func(w http.ResponseWriter,r *http.Request){ a.transition(w,r,"REJECTED","restaurant_decision",map[string]string{"decision":"REJECTED"}) })
     mux.HandleFunc("POST /v1/restaurant-orders/{order_id}/ready",func(w http.ResponseWriter,r *http.Request){ a.transition(w,r,"READY","restaurant_ready",map[string]string{"state":"READY"}) })
     mux.HandleFunc("POST /v1/restaurant-orders/{order_id}/cancel",a.cancel)
+    a.registerPortalRoutes(mux)
     port:=env("PORT","8084")
     log.Printf("restaurant-ops listening on :%s",port)
     log.Fatal((&http.Server{Addr:":"+port,Handler:mux,ReadHeaderTimeout:5*time.Second}).ListenAndServe())
