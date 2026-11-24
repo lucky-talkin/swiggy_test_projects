@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowRight, Bike, Check, ChefHat, Clock3, LoaderCircle, MapPin, PackageCheck, Power, Route, Store, Timer, Utensils, Wallet } from 'lucide-react'
+import { ArrowRight, Bike, Check, ChefHat, Clock3, LoaderCircle, MapPin, PackageCheck, Power, Route, Store, Timer, Utensils, Wallet } from 'lucide-react'
 import './operations-portals.css'
 
-const RESTAURANT_ID = import.meta.env.VITE_RESTAURANT_ID || 'restaurant-1'
-const DRIVER_ID = import.meta.env.VITE_DRIVER_ID || 'driver-demo-001'
-const PORTAL_TOKEN = import.meta.env.VITE_PORTAL_ACCESS_TOKEN || 'dev-portal-token'
+const viteEnv = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env
+const RESTAURANT_ID = viteEnv.VITE_RESTAURANT_ID || 'restaurant-1'
+const DRIVER_ID = viteEnv.VITE_DRIVER_ID || 'driver-demo-001'
+const PORTAL_TOKEN = viteEnv.VITE_PORTAL_ACCESS_TOKEN || 'dev-portal-token'
 
 type OrderItem = { item_id: string; quantity: number }
 type Address = { line1?: string; area?: string; city?: string; landmark?: string }
@@ -38,14 +39,10 @@ const activeStatuses = new Set(['ASSIGNED', 'PICKED_UP'])
 const finishedStatuses = new Set(['DELIVERED', 'RELEASED', 'DELIVERY_EXCEPTION'])
 
 async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Portal-Token': PORTAL_TOKEN,
-      ...init.headers
-    }
-  })
+  const headers = new Headers(init.headers)
+  headers.set('Content-Type', 'application/json')
+  headers.set('X-Portal-Token', PORTAL_TOKEN)
+  const response = await fetch(url, { ...init, headers })
   const raw = await response.text()
   const payload = raw ? JSON.parse(raw) : {}
   if (!response.ok) throw new Error(payload.message || payload.error || `Request failed (${response.status})`)
