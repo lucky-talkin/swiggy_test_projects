@@ -26,7 +26,10 @@ export default function App() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [customerId, setCustomerId] = useState('customer-1')
   const [address, setAddress] = useState('MG Road')
-  const [orderId, setOrderId] = useState<string | null>(null)
+  const [orderId, setOrderId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return window.localStorage.getItem('crave:last-order-id')
+  })
   const [notice, setNotice] = useState('')
   const [noticeError, setNoticeError] = useState(false)
 
@@ -45,6 +48,13 @@ export default function App() {
     pollingInterval: orderId ? 4000 : 0,
     skipPollingIfUnfocused: true
   })
+
+  // Keep the latest order reference across browser refreshes. The order itself
+  // remains server-owned; this only persists its ID so the tracker can reload it.
+  useEffect(() => {
+    if (orderId) window.localStorage.setItem('crave:last-order-id', orderId)
+    else window.localStorage.removeItem('crave:last-order-id')
+  }, [orderId])
 
   useEffect(() => {
     if (!orderId) return
