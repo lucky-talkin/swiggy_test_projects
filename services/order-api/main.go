@@ -148,7 +148,8 @@ func (a *app) createOrder(w http.ResponseWriter,r *http.Request) {
     if err!=nil { fail(w,500,"DATABASE_ERROR",err.Error()); return }
     _,err=tx.Exec(r.Context(),`INSERT INTO food_order_events(order_id,from_status,to_status,reason) VALUES($1,'','PENDING','order_created')`,inserted)
     if err!=nil { fail(w,500,"DATABASE_ERROR",err.Error()); return }
-    _,err=tx.Exec(r.Context(),`INSERT INTO food_order_outbox(event_type,aggregate_id,payload) VALUES('START_ORDER_WORKFLOW',$1,$2)`,inserted,payload)
+    eventPayload,_:=json.Marshal(map[string]any{"event_type":"START_ORDER_WORKFLOW","workflow_input":json.RawMessage(payload)})
+    _,err=tx.Exec(r.Context(),`INSERT INTO food_order_outbox(event_type,aggregatetype,aggregate_id,payload) VALUES('START_ORDER_WORKFLOW','food.order.events',$1,$2)`,inserted,eventPayload)
     if err!=nil { fail(w,500,"OUTBOX_ERROR",err.Error()); return }
     if err=tx.Commit(r.Context()); err!=nil { fail(w,500,"DATABASE_ERROR",err.Error()); return }
     a.returnOrder(w,r,inserted,http.StatusAccepted)
@@ -191,8 +192,8 @@ func (a *app) cancelOrder(w http.ResponseWriter,r *http.Request) {
     if errors.Is(err,pgx.ErrNoRows) { fail(w,404,"ORDER_NOT_FOUND","order does not exist"); return }
     if err!=nil { fail(w,500,"DATABASE_ERROR",err.Error()); return }
     if terminal[status] { fail(w,409,"ORDER_TERMINAL","order is already "+status); return }
-    payload,_:=json.Marshal(map[string]string{"reason":body.Reason})
-    _,err=tx.Exec(r.Context(),`INSERT INTO food_order_outbox(event_type,aggregate_id,payload) VALUES('SIGNAL_CANCEL',$1,$2)`,id,payload)
+    payload,_:=json.Marshal(map[string]any{"event_type":"SIGNAL_CANCEL","signal":map[string]string{"reason":body.Reason}})
+    _,err=tx.Exec(r.Context(),`INSERT INTO food_order_outbox(event_type,aggregatetype,aggregate_id,payload) VALUES('SIGNAL_CANCEL','food.order.events',$1,$2)`,id,payload)
     if err!=nil { fail(w,500,"OUTBOX_ERROR",err.Error()); return }
     if err=tx.Commit(r.Context()); err!=nil { fail(w,500,"DATABASE_ERROR",err.Error()); return }
     respond(w,202,map[string]string{"order_id":id,"status":"CANCEL_REQUESTED"})
@@ -241,61 +242,52 @@ func (a *app) updateStatus(w http.ResponseWriter,r *http.Request) {
     respond(w,200,map[string]string{"order_id":r.PathValue("id"),"status":req.Status})
 }
 
-func (a *app) dispatchOutbox(ctx context.Context) {
-    ticker:=time.NewTicker(500*time.Millisecond); defer ticker.Stop()
-    for {
-        select { case <-ctx.Done(): return; case <-ticker.C: }
-        var id int64
-        var eventType,aggregate string
-        var payload []byte
-        err:=a.db.QueryRow(ctx,`
-            UPDATE food_order_outbox
-            SET locked_until=NOW()+INTERVAL '30 seconds',attempts=attempts+1
-            WHERE outbox_id=(
-                SELECT outbox_id FROM food_order_outbox
-                WHERE dispatched_at IS NULL AND (locked_until IS NULL OR locked_until<NOW())
-                ORDER BY outbox_id LIMIT 1 FOR UPDATE SKIP LOCKED
-            )
-            RETURNING outbox_id,event_type,aggregate_id,payload`).Scan(&id,&eventType,&aggregate,&payload)
-        if errors.Is(err,pgx.ErrNoRows) { continue }
-        if err!=nil { log.Printf("outbox claim: %v",err); continue }
+type orderOutboxEvent struct {
+    EventType string `json:"event_type"`
+    WorkflowInput workflowInput `json:"workflow_input"`
+    Signal map[string]string `json:"signal"`
+}
 
-        switch eventType {
-        case "START_ORDER_WORKFLOW":
-            var input workflowInput
-            if err=json.Unmarshal(payload,&input); err==nil {
-                startCtx,cancel:=context.WithTimeout(ctx,10*time.Second)
-                _,err=a.temporal.ExecuteWorkflow(startCtx,temporalclient.StartWorkflowOptions{
-                    ID:"order-"+input.OrderID,
-                    TaskQueue:env("TEMPORAL_TASK_QUEUE","food-delivery-orders"),
-                    WorkflowIDReusePolicy:enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
-                },"OrderWorkflow",input)
-                cancel()
-                if err!=nil {
-                    message:=strings.ToLower(err.Error())
-                    if strings.Contains(message,"already started") || strings.Contains(message,"already exists") { err=nil }
-                }
-            }
-        case "SIGNAL_CANCEL":
-            var signal map[string]string
-            err=json.Unmarshal(payload,&signal)
-            if err==nil {
-                err=a.temporal.SignalWorkflow(ctx,"order-"+aggregate,"","cancel_order",signal)
-                if err!=nil && workflowClosed(err) { err=nil }
-            }
-        default:
-            err=fmt.Errorf("unknown outbox event type %s",eventType)
-        }
-        if err!=nil {
-            _,_ = a.db.Exec(ctx,"UPDATE food_order_outbox SET locked_until=NOW()+make_interval(secs => LEAST(POWER(2,LEAST(attempts,6)),60)),last_error=$2 WHERE outbox_id=$1",id,err.Error())
-            log.Printf("outbox %d retry: %v",id,err)
-            continue
-        }
-        _,err=a.db.Exec(ctx,"UPDATE food_order_outbox SET dispatched_at=NOW(),locked_until=NULL,last_error='' WHERE outbox_id=$1",id)
-        if err!=nil { log.Printf("outbox acknowledge %d: %v",id,err) }
+// consumeOrderOutbox reads committed rows emitted by Debezium's Outbox Event Router.
+// Kafka offsets are committed only after Temporal accepts the corresponding operation.
+func (a *app) consumeOrderOutbox(ctx context.Context) {
+    reader:=kafka.NewReader(kafka.ReaderConfig{
+        Brokers:strings.Split(env("KAFKA_BROKERS","kafka:29092"),","),
+        Topic:env("KAFKA_ORDER_EVENTS_TOPIC","food.order.events"),
+        GroupID:env("KAFKA_CONSUMER_GROUP","order-api-temporal"),
+        MinBytes:1,MaxBytes:10e6,CommitInterval:0,
+    })
+    defer reader.Close()
+    log.Printf("Debezium order outbox consumer started")
+    for {
+        msg,err:=reader.FetchMessage(ctx)
+        if err!=nil { if ctx.Err()!=nil { return }; log.Printf("Kafka fetch: %v",err); time.Sleep(time.Second); continue }
+        var event orderOutboxEvent
+        if err=json.Unmarshal(msg.Value,&event); err!=nil { log.Printf("invalid outbox event at offset %d: %v",msg.Offset,err); time.Sleep(time.Second); continue }
+        if err=a.handleOrderOutboxEvent(ctx,msg.Key,event); err!=nil { log.Printf("outbox event %s retry: %v",event.EventType,err); time.Sleep(time.Second); continue }
+        if err=reader.CommitMessages(ctx,msg); err!=nil { log.Printf("Kafka offset commit: %v",err) }
     }
 }
 
+func (a *app) handleOrderOutboxEvent(ctx context.Context,key []byte,event orderOutboxEvent) error {
+    switch event.EventType {
+    case "START_ORDER_WORKFLOW":
+        input:=event.WorkflowInput
+        if input.OrderID=="" { return fmt.Errorf("workflow_input.order_id is required") }
+        startCtx,cancel:=context.WithTimeout(ctx,10*time.Second); defer cancel()
+        _,err:=a.temporal.ExecuteWorkflow(startCtx,temporalclient.StartWorkflowOptions{
+            ID:"order-"+input.OrderID,TaskQueue:env("TEMPORAL_TASK_QUEUE","food-delivery-orders"),
+            WorkflowIDReusePolicy:enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+        },"OrderWorkflow",input)
+        if err!=nil { msg:=strings.ToLower(err.Error()); if strings.Contains(msg,"already started") || strings.Contains(msg,"already exists") { return nil } }
+        return err
+    case "SIGNAL_CANCEL":
+        orderID:=string(key); if orderID=="" { return fmt.Errorf("Kafka key must contain order id") }
+        err:=a.temporal.SignalWorkflow(ctx,"order-"+orderID,"","cancel_order",event.Signal)
+        if err!=nil && workflowClosed(err) { return nil }; return err
+    default: return fmt.Errorf("unknown order outbox event type %q",event.EventType)
+    }
+}
 func (a *app) authorized(r *http.Request) bool { return r.Header.Get("X-Service-Token")==a.internalToken }
 func migrate(db *pgxpool.Pool) error {
     data,err:=os.ReadFile("migrations/001_orders.sql"); if err!=nil { return err }
