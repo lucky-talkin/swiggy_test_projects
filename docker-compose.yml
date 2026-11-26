@@ -56,7 +56,7 @@ services:
       timeout: 10s
       retries: 12
   debezium-connect:
-    image: debezium/connect:3.2.1.Final
+    image: quay.io/debezium/connect:3.2.7.Final
     restart: unless-stopped
     depends_on:
       postgres:
