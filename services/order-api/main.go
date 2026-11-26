@@ -14,6 +14,7 @@ import (
     "strings"
     "time"
 
+    "github.com/segmentio/kafka-go"
     "github.com/jackc/pgx/v5"
     "github.com/jackc/pgx/v5/pgxpool"
     "go.temporal.io/api/enums/v1"
@@ -71,7 +72,7 @@ func main() {
     }
     defer temporal.Close()
     a:=&app{db:db,temporal:temporal,internalToken:env("INTERNAL_SERVICE_TOKEN","dev-internal-token")}
-    go a.dispatchOutbox(ctx)
+    go a.consumeOrderOutbox(ctx)
 
     mux:=http.NewServeMux()
     mux.HandleFunc("GET /healthz",a.health)
