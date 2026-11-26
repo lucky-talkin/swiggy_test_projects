@@ -182,7 +182,7 @@ services:
 
   order-api:
     build: ./services/order-api
-    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "KAFKA_BROKERS=kafka:29092", "KAFKA_ORDER_EVENTS_TOPIC=food.order.events"]
+    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "KAFKA_BROKERS=kafka:29092", "KAFKA_ORDER_EVENTS_TOPIC=food.order.events", "KAFKA_CONSUMER_GROUP=order-api-temporal"]
     ports: ["8086:8086"]
     depends_on:
       postgres:
@@ -192,6 +192,17 @@ services:
       kafka:
         condition: service_healthy
 
+  debezium-register:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      debezium-connect:
+        condition: service_started
+      order-api:
+        condition: service_started
+    volumes:
+      - ./infra/debezium:/debezium:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["until curl -fsS http://debezium-connect:8083/; do sleep 2; done; curl -fsS -X PUT -H 'Content-Type: application/json' --data-binary @/debezium/order-outbox-connector.json http://debezium-connect:8083/connectors/order-outbox-connector/config"]
   temporal-worker:
     build: ./workflows
     environment: ["TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_NAMESPACE=default", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "RESTAURANT_OPS_URL=http://restaurant-ops:8084", "DRIVER_OPS_URL=http://driver-ops:8085", "ORDER_API_URL=http://order-api:8086"]
