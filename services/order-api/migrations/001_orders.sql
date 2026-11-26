@@ -34,3 +34,5 @@ CREATE TABLE IF NOT EXISTS food_order_outbox (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_food_order_outbox_pending ON food_order_outbox(dispatched_at, locked_until, outbox_id);
+
+ALTER TABLE food_order_outbox ADD COLUMN IF NOT EXISTS aggregatetype TEXT NOT NULL DEFAULT 'food.order.events';
