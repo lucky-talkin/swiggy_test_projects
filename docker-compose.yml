@@ -182,6 +182,12 @@ services:
 
   order-api:
     build: ./services/order-api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8086/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "KAFKA_BROKERS=kafka:29092", "KAFKA_ORDER_EVENTS_TOPIC=food.order.events", "KAFKA_CONSUMER_GROUP=order-api-temporal"]
     ports: ["8086:8086"]
     depends_on:
@@ -198,7 +204,7 @@ services:
       debezium-connect:
         condition: service_started
       order-api:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./infra/debezium:/debezium:ro
     entrypoint: ["/bin/sh", "-c"]
