@@ -6,6 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-food}
       POSTGRES_DB: ${POSTGRES_DB:-food_delivery}
     ports: ["5432:5432"]
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-food} -d ${POSTGRES_DB:-food_delivery}"]
@@ -54,6 +55,27 @@ services:
       interval: 10s
       timeout: 10s
       retries: 12
+  debezium-connect:
+    image: debezium/connect:3.2.1.Final
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: debezium_connect_configs
+      OFFSET_STORAGE_TOPIC: debezium_connect_offsets
+      STATUS_STORAGE_TOPIC: debezium_connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    ports: ["8087:8083"]
   temporal-admin-tools:
     image: temporalio/admin-tools:1.32.2
     restart: on-failure:6
@@ -160,14 +182,33 @@ services:
 
   order-api:
     build: ./services/order-api
-    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8086/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    environment: ["PORT=8086", "DATABASE_URL=${POSTGRES_DSN:-postgres://food:food@postgres:5432/food_delivery?sslmode=disable}", "TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "KAFKA_BROKERS=kafka:29092", "KAFKA_ORDER_EVENTS_TOPIC=food.order.events", "KAFKA_CONSUMER_GROUP=order-api-temporal"]
     ports: ["8086:8086"]
     depends_on:
       postgres:
         condition: service_healthy
       temporal-create-namespace:
         condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
 
+  debezium-register:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      debezium-connect:
+        condition: service_started
+      order-api:
+        condition: service_healthy
+    volumes:
+      - ./infra/debezium:/debezium:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["until curl -fsS http://debezium-connect:8083/; do sleep 2; done; curl -fsS -X PUT -H 'Content-Type: application/json' --data-binary @/debezium/order-outbox-connector.json http://debezium-connect:8083/connectors/order-outbox-connector/config"]
   temporal-worker:
     build: ./workflows
     environment: ["TEMPORAL_ADDRESS=temporal:7233", "TEMPORAL_NAMESPACE=default", "TEMPORAL_TASK_QUEUE=food-delivery-orders", "INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-internal-token}", "RESTAURANT_OPS_URL=http://restaurant-ops:8084", "DRIVER_OPS_URL=http://driver-ops:8085", "ORDER_API_URL=http://order-api:8086"]

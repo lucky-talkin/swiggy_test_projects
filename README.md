@@ -14,7 +14,7 @@ A microservices-based food-delivery backend built for distributed-systems practi
 | order-api | Customer orders, idempotency, status history and workflow start | PostgreSQL |
 | temporal-worker | Durable order orchestration and compensation | Temporal (Python SDK) |
 
-Redis and Kafka are included as supporting infrastructure for future caching, geo lookup and asynchronous domain-event fan-out. The current order saga uses transactional outboxes for reliable handoff to Temporal.
+Redis is included for caching and geo lookup. Kafka and Debezium provide CDC-based outbox delivery for Order API. The Order API writes its order and outbox event in one PostgreSQL transaction; Debezium reads the PostgreSQL WAL and routes the event to Kafka, where Order API consumes it and starts or signals Temporal.
 
 ## Run locally
 
@@ -36,6 +36,27 @@ Infrastructure:
 APIs: user-auth 8081, catalog 8082, search 8083, restaurant-ops 8084, driver-ops 8085, order-api 8086.
 
 Temporal admin-tools initializes the separate Temporal persistence and visibility schemas in PostgreSQL and creates the `default` namespace before the order API and worker start. Go services apply their own migrations at startup. Driver Ops does not create demo drivers. To add optional local demo drivers, run `docker compose exec -T postgres psql -U food -d food_delivery < infra/postgres/seeds/dev_drivers.sql` explicitly after the database is ready. The Driver portal lists registered drivers and lets you select one.
+
+
+### Order API CDC with Debezium
+
+The Order API uses the Debezium PostgreSQL connector with the Outbox Event Router SMT. PostgreSQL must run with `wal_level=logical`; Compose configures this for the local environment. The `debezium-register` one-shot service registers `infra/debezium/order-outbox-connector.json` after Order API migrations complete.
+
+Order creation and its `food_order_outbox` row are committed atomically. Debezium captures the committed row from WAL and publishes it to `food.order.events`. The Order API Kafka consumer starts `OrderWorkflow` for `START_ORDER_WORKFLOW` events and sends `cancel_order` for `SIGNAL_CANCEL` events. Kafka offsets are committed after Temporal accepts the operation. Workflow IDs are deterministic, so replayed start events are safe; consumers must still be designed for at-least-once delivery.
+
+Inspect connector state:
+
+```bash
+curl http://localhost:8087/connectors/order-outbox-connector/status
+curl http://localhost:8087/connectors
+```
+
+After changing PostgreSQL WAL settings, recreate the local PostgreSQL container (keep the named volume):
+
+```bash
+docker compose up -d --force-recreate postgres
+docker compose up --build -d
+```
 
 ## Search API
 
