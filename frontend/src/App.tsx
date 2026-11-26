@@ -137,6 +137,15 @@ export default function App() {
 
       <section className="browse-section">
         <div className="section-heading"><div>{selectedRestaurant && <button className="back-button" onClick={() => { setSelectedRestaurant(null); setSearch(''); showNotice('') }}><ArrowLeft size={15}/> All restaurants</button>}<span className="eyebrow">{selectedRestaurant ? 'EXPLORE THE MENU' : 'FIND YOUR FAVOURITE'}</span><h2>{selectedRestaurant ? selectedRestaurant.name : 'Restaurants near you'}</h2>{selectedRestaurant && <p className="restaurant-subtitle">{selectedRestaurant.cuisines?.join(' · ')} · {selectedRestaurant.area} · {selectedRestaurant.delivery_time_minutes} min delivery</p>}</div></div>
+        {!selectedRestaurant && foods.some(item => item.entity_type === 'restaurant') && <label className="restaurant-picker">Choose a restaurant
+          <select aria-label="Choose a restaurant" value="" onChange={e => {
+            const restaurant = foods.find(item => item.entity_type === 'restaurant' && item.id === e.target.value)
+            if (restaurant) { setSelectedRestaurant(restaurant); setSearch(''); showNotice('') }
+          }}>
+            <option value="">Select a restaurant…</option>
+            {foods.filter(item => item.entity_type === 'restaurant' && item.id).map(item => <option key={item.id} value={item.id}>{item.name}{item.area ? ' · ' + item.area : ''}</option>)}
+          </select>
+        </label>}
         {notice && <div className={noticeError ? 'notice notice-error' : 'notice'}><span>{notice}</span><button onClick={() => setNotice('')}><X size={16}/></button></div>}
         {error && <div className="error-panel"><strong>Search API request failed.</strong><p>{errorMessage(error)}</p><button className="retry-button" onClick={() => refetch()}>Retry</button></div>}
         {isLoading && <div className="loading"><LoaderCircle className="spin"/> Loading {selectedRestaurant ? 'menu' : 'restaurants'}...</div>}
