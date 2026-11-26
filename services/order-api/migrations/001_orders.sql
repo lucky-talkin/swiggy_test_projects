@@ -36,3 +36,12 @@ CREATE TABLE IF NOT EXISTS food_order_outbox (
 CREATE INDEX IF NOT EXISTS idx_food_order_outbox_pending ON food_order_outbox(dispatched_at, locked_until, outbox_id);
 
 ALTER TABLE food_order_outbox ADD COLUMN IF NOT EXISTS aggregatetype TEXT NOT NULL DEFAULT 'food.order.events';
+
+-- Backfill legacy rows so the initial Debezium snapshot uses the consumer envelope.
+UPDATE food_order_outbox
+SET payload = CASE
+ WHEN event_type = 'START_ORDER_WORKFLOW' THEN jsonb_build_object('event_type', event_type, 'workflow_input', payload)
+ WHEN event_type = 'SIGNAL_CANCEL' THEN jsonb_build_object('event_type', event_type, 'signal', payload)
+ ELSE jsonb_build_object('event_type', event_type, 'legacy_payload', payload)
+END
+WHERE NOT (payload ? 'event_type');
