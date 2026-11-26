@@ -1,6 +1,4 @@
-{
-  "name": "order-outbox-connector",
-  "config": {
+ {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
     "database.hostname": "postgres",
     "database.port": "5432",
@@ -30,4 +28,3 @@
     "value.converter": "org.apache.kafka.connect.json.JsonConverter",
     "value.converter.schemas.enable": "false"
   }
-}

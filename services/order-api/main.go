@@ -62,13 +62,18 @@ func main() {
 	flag.Parse()
 
 	if *healthCheck {
-		resp, err := http.Get("http://localhost:8080/health")
-		if err != nil || resp.StatusCode != http.StatusOK {
-			os.Exit(1) // Unhealthy
+		resp, err := http.Get("http://localhost:8086/healthz")
+		if err != nil {
+			os.Exit(1)
 		}
-		os.Exit(0) // Healthy
-	}
+		defer resp.Body.Close()
 
+		if resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+
+		os.Exit(0)
+	}
 	ctx := context.Background()
 	db, err := pgxpool.New(ctx, env("DATABASE_URL", "postgres://food:food@localhost:5432/food_delivery?sslmode=disable"))
 	if err != nil {
